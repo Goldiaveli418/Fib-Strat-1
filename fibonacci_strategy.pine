@@ -1,5 +1,5 @@
 //@version=6
-Avelli Fib indicator("Fib Strategy v1", overlay=true, max_lines_count=500, max_labels_count=300, max_boxes_count=50)
+indicator("Fib Strategy v1", overlay=true, max_lines_count=500, max_labels_count=300, max_boxes_count=50)
 
 // ─── Groups ───────────────────────────────────────────────────────────────────
 g_pivot = "Pivot Settings"
