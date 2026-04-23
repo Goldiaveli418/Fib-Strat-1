@@ -8,12 +8,20 @@ g_ema   = "EMA Settings"
 g_vol   = "Volume Settings"
 
 // ─── Inputs ───────────────────────────────────────────────────────────────────
-pivotLeft     = input.int(5,    "Lookback Left",             minval=1,    group=g_pivot)
-pivotRight    = input.int(5,    "Lookback Right",            minval=1,    group=g_pivot)
-showBothFibs  = input.bool(true,"Show Both Fib Sets (Up & Down)",         group=g_fib)
-emaTol        = input.float(0.1,"EMA Confluence Tolerance %",minval=0.01, group=g_ema,  step=0.01)
-volAvgLen     = input.int(20,   "Volume Avg Length",         minval=1,    group=g_vol)
-volMult       = input.float(2.0,"Vol Spike Multiplier",      minval=1.0,  group=g_vol,  step=0.1)
+pivotLeft  = input.int(5,   "Lookback Left",  minval=1, group=g_pivot)
+pivotRight = input.int(5,   "Lookback Right", minval=1, group=g_pivot)
+
+fibMode   = input.string("Both", "Fib Display", options=["Both", "With Trend", "Against Trend"], group=g_fib)
+colPivot  = input.color(color.new(color.gray, 40), "Pivot levels (0 / 1.0)",      group=g_fib)
+colTP1    = input.color(color.lime,                "TP1  (0.236)",                 group=g_fib)
+colGP     = input.color(color.aqua,               "Golden Pocket (0.618 / 0.65)", group=g_fib)
+col786    = input.color(color.yellow,              "Entry zone (0.786)",           group=g_fib)
+colSL     = input.color(color.red,                "SL ref (0.886)",               group=g_fib)
+colConfl  = input.color(color.orange,             "EMA Confluence highlight",      group=g_fib)
+
+emaTol    = input.float(0.1, "EMA Confluence Tolerance %", minval=0.01, group=g_ema, step=0.01)
+volAvgLen = input.int(20,    "Volume Avg Length",           minval=1,    group=g_vol)
+volMult   = input.float(2.0, "Vol Spike Multiplier",        minval=1.0,  group=g_vol, step=0.1)
 
 // ─── EMAs ─────────────────────────────────────────────────────────────────────
 ema50  = ta.ema(close, 50)
@@ -76,20 +84,20 @@ emaConf(price) =>
     t = price * emaTol / 100.0
     math.abs(ema50 - price) <= t or math.abs(ema100 - price) <= t or math.abs(ema200 - price) <= t
 
-// Color for each fib level (gold if EMA confluent)
+// Color for each fib level (EMA confluence takes priority)
 fibColor(ratio, conf) =>
     if conf
-        color.orange
+        colConfl
     else if ratio == 0.618 or ratio == 0.65
-        color.aqua
+        colGP
     else if ratio == 0.786
-        color.yellow
+        col786
     else if ratio == 0.886
-        color.red
+        colSL
     else if ratio == 0.236
-        color.lime
+        colTP1
     else
-        color.new(color.gray, 40)
+        colPivot
 
 // ─── Drawing Storage ──────────────────────────────────────────────────────────
 var line[]  allLines  = array.new_line()
@@ -143,12 +151,11 @@ drawFibSet(hi, lo, isUp) =>
 // Redraw whenever a new pivot arrives and both pivots are known
 if (newHigh or newLow) and not na(lastPH) and not na(lastPL)
     clearAll()
-    if showBothFibs
+    drawUp = fibMode == "Both" or (fibMode == "With Trend" and uptrend) or (fibMode == "Against Trend" and not uptrend)
+    drawDn = fibMode == "Both" or (fibMode == "With Trend" and not uptrend) or (fibMode == "Against Trend" and uptrend)
+    if drawUp
         drawFibSet(lastPH, lastPL, true)
-        drawFibSet(lastPH, lastPL, false)
-    else if uptrend
-        drawFibSet(lastPH, lastPL, true)
-    else
+    if drawDn
         drawFibSet(lastPH, lastPL, false)
 
 // ─── Zone Math ────────────────────────────────────────────────────────────────
