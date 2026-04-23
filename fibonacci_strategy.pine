@@ -189,10 +189,7 @@ plotshape(zoneClose and not zoneClose[1], "Zone Close Confirm",
 // ─── Alert Messages ───────────────────────────────────────────────────────────
 emaAtClose = emaConf(close)
 
-zoneLabel = upGPt  ? "UP Golden Pocket (0.618-0.65)" :
-            dnGPt  ? "DN Golden Pocket (0.618-0.65)" :
-            up786t ? "UP 0.786"                      :
-            dn786t ? "DN 0.786"                      : "Fib Zone"
+zoneLabel = upGPt ? "UP Golden Pocket (0.618-0.65)" : dnGPt ? "DN Golden Pocket (0.618-0.65)" : up786t ? "UP 0.786" : dn786t ? "DN 0.786" : "Fib Zone"
 
 touchMsg = "FIB TOUCH | "    + zoneLabel +
     " | Trend: "    + (uptrend      ? "UP"  : "DOWN") +
