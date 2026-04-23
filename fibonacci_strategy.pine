@@ -8,8 +8,9 @@ g_ema   = "EMA Settings"
 g_vol   = "Volume Settings"
 
 // ─── Inputs ───────────────────────────────────────────────────────────────────
-pivotLeft  = input.int(5,   "Lookback Left",  minval=1, group=g_pivot)
-pivotRight = input.int(5,   "Lookback Right", minval=1, group=g_pivot)
+pivotLeft  = input.int(5,   "Lookback Left",                      minval=1, group=g_pivot)
+pivotRight = input.int(5,   "Lookback Right",                     minval=1, group=g_pivot)
+pivotTF    = input.timeframe("", "Pivot Timeframe (blank = chart)", group=g_pivot)
 
 fibMode   = input.string("Both", "Fib Display", options=["Both", "With Trend", "Against Trend"], group=g_fib)
 colPivot  = input.color(color.new(color.gray, 40), "Pivot levels (0 / 1.0)",      group=g_fib)
@@ -41,8 +42,11 @@ barcolor(volSpike ? color.new(color.purple, 50) : na)
 uptrend = close > ema50
 
 // ─── Pivot Detection ──────────────────────────────────────────────────────────
-pivHigh = ta.pivothigh(high, pivotLeft, pivotRight)
-pivLow  = ta.pivotlow(low,  pivotLeft, pivotRight)
+// Run pivot logic on the chosen timeframe; falls back to chart TF when blank
+_tf = pivotTF == "" ? timeframe.period : pivotTF
+isHTF = pivotTF != ""
+
+[pivHigh, pivLow] = request.security(syminfo.tickerid, _tf, [ta.pivothigh(high, pivotLeft, pivotRight), ta.pivotlow(low, pivotLeft, pivotRight)], lookahead=barmerge.lookahead_off)
 
 var float lastPH    = na
 var int   lastPHBar = na
@@ -52,9 +56,10 @@ var int   lastPLBar = na
 newHigh = not na(pivHigh)
 newLow  = not na(pivLow)
 
+// For chart TF, label sits at the pivot bar; for HTF, label sits at confirmation bar
 if newHigh
     lastPH    := pivHigh
-    lastPHBar := bar_index - pivotRight
+    lastPHBar := isHTF ? bar_index : bar_index - pivotRight
     label.new(lastPHBar, lastPH, "H",
         style     = label.style_label_down,
         color     = color.new(color.red, 0),
@@ -63,7 +68,7 @@ if newHigh
 
 if newLow
     lastPL    := pivLow
-    lastPLBar := bar_index - pivotRight
+    lastPLBar := isHTF ? bar_index : bar_index - pivotRight
     label.new(lastPLBar, lastPL, "L",
         style     = label.style_label_up,
         color     = color.new(color.green, 0),
