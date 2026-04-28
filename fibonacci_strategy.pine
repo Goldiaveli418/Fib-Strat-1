@@ -12,7 +12,6 @@ g_time   = "Time Filter"
 g_pivot  = "Pivot Settings"
 g_levels = "Fib Levels"
 g_boxes  = "Fib Boxes"
-g_ema    = "EMA Settings"
 g_vol    = "Volume Settings"
 
 // ─── Risk Inputs ──────────────────────────────────────────────────────────────
@@ -21,25 +20,24 @@ slAtrMult = input.float(1.5, "SL ATR Multiplier",   minval=0.5, step=0.25, group
 showSlTp  = input.bool(true, "Show SL/TP lines",                            group=g_risk)
 
 // ─── Entry Filter Inputs ──────────────────────────────────────────────────────
-requireEMA    = input.bool(false, "Require EMA Confluence",          group=g_entry)
 requireVol    = input.bool(false, "Require Volume Spike",            group=g_entry)
 requireCandle = input.bool(false, "Require Candle Confirmation",     group=g_entry)
 useGP         = input.bool(true,  "Trade Golden Pocket (0.618-0.65)", group=g_entry)
 use786        = input.bool(true,  "Trade 0.786 Level",               group=g_entry)
 
 // ─── Time Filter Inputs ───────────────────────────────────────────────────────
-useTimeFilter = input.bool(true,           "Enable Session Filter",           group=g_time)
-sessionStr    = input.session("0930-1600", "Session (Exchange Timezone)",     group=g_time)
+useTimeFilter = input.bool(true,           "Enable Session Filter",       group=g_time)
+sessionStr    = input.session("0930-1600", "Session (Exchange Timezone)", group=g_time)
 
 // ─── Pivot Inputs ─────────────────────────────────────────────────────────────
-pivotLeft   = input.int(5,    "Lookback Left",                                 minval=1,                    group=g_pivot)
-pivotRight  = input.int(5,    "Lookback Right",                                minval=1,                    group=g_pivot)
-pivotTF     = input.timeframe("", "Pivot Timeframe (blank = chart)",                                        group=g_pivot)
-showPivRay  = input.bool(true,    "Show Pivot H/L Ray",                                                     group=g_pivot)
-colPivH     = input.color(color.red,   "High ray color",                                                    group=g_pivot)
-colPivL     = input.color(color.green, "Low ray color",                                                     group=g_pivot)
-pivLblPos   = input.string("Right", "Label position",  options=["Left","Right"],                            group=g_pivot)
-pivLblStyle = input.string("Label Box", "Label style", options=["Plain","Label Box"],                       group=g_pivot)
+pivotLeft   = input.int(5,    "Lookback Left",                             minval=1,              group=g_pivot)
+pivotRight  = input.int(5,    "Lookback Right",                            minval=1,              group=g_pivot)
+pivotTF     = input.timeframe("", "Pivot Timeframe (blank = chart)",                              group=g_pivot)
+showPivRay  = input.bool(true,    "Show Pivot H/L Ray",                                           group=g_pivot)
+colPivH     = input.color(color.red,   "High ray color",                                          group=g_pivot)
+colPivL     = input.color(color.green, "Low ray color",                                           group=g_pivot)
+pivLblPos   = input.string("Right", "Label position",  options=["Left","Right"],                  group=g_pivot)
+pivLblStyle = input.string("Label Box", "Label style", options=["Plain","Label Box"],             group=g_pivot)
 
 // ─── Fib Level Inputs ─────────────────────────────────────────────────────────
 fibMode = input.string("Both", "Fib Display", options=["Both","With Trend","Against Trend"], group=g_levels)
@@ -65,23 +63,11 @@ showBox  = input.bool(true,  "Show Golden Pocket box",                    group=
 colBoxUp = input.color(color.new(color.aqua,   80), "Up-fib box color",   group=g_boxes)
 colBoxDn = input.color(color.new(color.orange, 80), "Down-fib box color", group=g_boxes)
 
-// ─── EMA Inputs ───────────────────────────────────────────────────────────────
-emaTol = input.float(0.1, "EMA Confluence Tolerance %", minval=0.01, step=0.01, group=g_ema)
-
 // ─── Volume Inputs ────────────────────────────────────────────────────────────
 volAvgLen    = input.int(20,    "Volume Avg Length",               minval=1,   group=g_vol)
 volMult      = input.float(2.0, "Vol Spike Multiplier",            minval=1.0, group=g_vol, step=0.1)
 showVolColor = input.bool(true, "Color candles on vol spike",                  group=g_vol)
 colVolSpike  = input.color(color.new(color.purple, 50), "Vol spike candle color", group=g_vol)
-
-// ─── EMAs ─────────────────────────────────────────────────────────────────────
-ema50  = ta.ema(close, 50)
-ema100 = ta.ema(close, 100)
-ema200 = ta.ema(close, 200)
-
-plot(ema50,  "EMA 50",  color=#F0C040, linewidth=1)
-plot(ema100, "EMA 100", color=#F08040, linewidth=1)
-plot(ema200, "EMA 200", color=#E04040, linewidth=2)
 
 // ─── Volume ───────────────────────────────────────────────────────────────────
 avgVol   = ta.sma(volume, volAvgLen)
@@ -151,10 +137,6 @@ var fibLabels = array.from("0.0", "0.236  TP1", "0.618", "0.65  GP", "0.786", "0
 fibPrice(hi, lo, ratio, isUp) =>
     isUp ? hi - (hi - lo) * ratio : lo + (hi - lo) * ratio
 
-emaConf(price) =>
-    t = price * emaTol / 100.0
-    math.abs(ema50 - price) <= t or math.abs(ema100 - price) <= t or math.abs(ema200 - price) <= t
-
 fibColor(r) =>
     if r == 0.236
         col236
@@ -210,10 +192,8 @@ drawFibSet(hi, lo, isUp, phBar, plBar) =>
         lbl = array.get(fibLabels, i)
         if levelEnabled(r)
             p   = fibPrice(hi, lo, r, isUp)
-            c   = emaConf(p)
             col = fibColor(r)
-            wid = c ? 2 : 1
-            ln  = line.new(leftBar, p, bar_index + 1, p, extend=extend.right, color=col, width=wid, style=line.style_solid)
+            ln  = line.new(leftBar, p, bar_index + 1, p, extend=extend.right, color=col, width=1, style=line.style_solid)
             array.push(allLines, ln)
             lb  = label.new(bar_index + 3, p, (isUp ? "▲ " : "▼ ") + lbl, style=label.style_label_left, color=color.new(color.black, 100), textcolor=col, size=size.tiny)
             array.push(allFibLbs, lb)
@@ -224,21 +204,13 @@ drawFibSet(hi, lo, isUp, phBar, plBar) =>
         bx  = box.new(leftBar, math.max(gp1, gp2), bar_index + 1, math.min(gp1, gp2), bgcolor=gpC, border_color=color.new(color.gray, 80), extend=extend.right)
         array.push(allBoxes, bx)
 
-if (newHigh or newLow) and not na(lastPH) and not na(lastPL)
-    clearAll()
-    _up = lastPHBar > lastPLBar
-    drawUp = fibMode == "Both" or (fibMode == "With Trend" and _up) or (fibMode == "Against Trend" and not _up)
-    drawDn = fibMode == "Both" or (fibMode == "With Trend" and not _up) or (fibMode == "Against Trend" and _up)
-    if drawUp
-        drawFibSet(lastPH, lastPL, true,  lastPHBar, lastPLBar)
-    if drawDn
-        drawFibSet(lastPH, lastPL, false, lastPHBar, lastPLBar)
-
 // ─── Zone Math ────────────────────────────────────────────────────────────────
 hasPivots = not na(lastPH) and not na(lastPL)
 rng       = hasPivots ? lastPH - lastPL : na
 
-// ─── Trend (pivot-structure: last pivot was high = prior move was up = look for long retracement)
+// Trend: determined by which pivot formed most recently
+// Last pivot = high → prior move was up → now retracing → look for long
+// Last pivot = low  → prior move was down → now bouncing → look for short
 uptrend   = hasPivots and lastPHBar > lastPLBar
 downtrend = hasPivots and lastPLBar > lastPHBar
 
@@ -255,6 +227,16 @@ dnGPt  = hasPivots and high >= dnGP_lo and low  <= dnGP_hi
 up786t = hasPivots and low  <= up786   and high >= up786
 dn786t = hasPivots and high >= dn786   and low  <= dn786
 
+if (newHigh or newLow) and hasPivots
+    clearAll()
+    _up = lastPHBar > lastPLBar
+    drawUp = fibMode == "Both" or (fibMode == "With Trend" and _up) or (fibMode == "Against Trend" and not _up)
+    drawDn = fibMode == "Both" or (fibMode == "With Trend" and not _up) or (fibMode == "Against Trend" and _up)
+    if drawUp
+        drawFibSet(lastPH, lastPL, true,  lastPHBar, lastPLBar)
+    if drawDn
+        drawFibSet(lastPH, lastPL, false, lastPHBar, lastPLBar)
+
 // ─── Session Filter ───────────────────────────────────────────────────────────
 inSession = not useTimeFilter or not na(time(timeframe.period, sessionStr))
 
@@ -269,12 +251,10 @@ longCandle  = not requireCandle or close > open
 shortCandle = not requireCandle or close < open
 
 longCondition  = inSession and longFibZone  and uptrend   and longCandle  and
-                 (not requireEMA or emaConf(close)) and (not requireVol or volSpike) and
-                 strategy.position_size == 0
+                 (not requireVol or volSpike) and strategy.position_size == 0
 
 shortCondition = inSession and shortFibZone and downtrend and shortCandle and
-                 (not requireEMA or emaConf(close)) and (not requireVol or volSpike) and
-                 strategy.position_size == 0
+                 (not requireVol or volSpike) and strategy.position_size == 0
 
 // ─── Trade Execution ──────────────────────────────────────────────────────────
 var float activeSL = na
@@ -321,19 +301,16 @@ alertcondition(longCondition,  "Long Entry",  "Fib Long: {{ticker}} @ {{close}}"
 alertcondition(shortCondition, "Short Entry", "Fib Short: {{ticker}} @ {{close}}")
 
 // ─── Status Table ─────────────────────────────────────────────────────────────
-var table tbl = table.new(position.bottom_right, 2, 6, bgcolor=color.new(color.black, 70), border_color=color.new(color.gray, 50), border_width=1)
-emaAtClose = emaConf(close)
+var table tbl = table.new(position.bottom_right, 2, 5, bgcolor=color.new(color.black, 70), border_color=color.new(color.gray, 50), border_width=1)
 
 if barstate.islast
-    table.cell(tbl, 0, 0, "Pivot H",   text_color=color.red,    text_size=size.small)
-    table.cell(tbl, 1, 0, hasPivots ? str.tostring(lastPH, "#.####") : "—", text_color=color.white,  text_size=size.small)
-    table.cell(tbl, 0, 1, "Pivot L",   text_color=color.lime,   text_size=size.small)
-    table.cell(tbl, 1, 1, hasPivots ? str.tostring(lastPL, "#.####") : "—", text_color=color.white,  text_size=size.small)
-    table.cell(tbl, 0, 2, "Trend",     text_color=color.gray,   text_size=size.small)
-    table.cell(tbl, 1, 2, uptrend ? "UP ▲" : "DOWN ▼", text_color=uptrend ? color.lime : color.red,  text_size=size.small)
-    table.cell(tbl, 0, 3, "EMA Conf",  text_color=color.gray,   text_size=size.small)
-    table.cell(tbl, 1, 3, emaAtClose ? "YES ✓" : "NO", text_color=emaAtClose ? color.lime : color.gray, text_size=size.small)
-    table.cell(tbl, 0, 4, "Vol Spike", text_color=color.gray,   text_size=size.small)
-    table.cell(tbl, 1, 4, volSpike ? "YES ✓" : "NO",   text_color=volSpike   ? color.purple : color.gray, text_size=size.small)
-    table.cell(tbl, 0, 5, "Session",   text_color=color.gray,   text_size=size.small)
-    table.cell(tbl, 1, 5, inSession ? "ACTIVE" : "OFF", text_color=inSession  ? color.lime : color.gray,  text_size=size.small)
+    table.cell(tbl, 0, 0, "Pivot H",   text_color=color.red,   text_size=size.small)
+    table.cell(tbl, 1, 0, hasPivots ? str.tostring(lastPH, "#.####") : "—", text_color=color.white, text_size=size.small)
+    table.cell(tbl, 0, 1, "Pivot L",   text_color=color.lime,  text_size=size.small)
+    table.cell(tbl, 1, 1, hasPivots ? str.tostring(lastPL, "#.####") : "—", text_color=color.white, text_size=size.small)
+    table.cell(tbl, 0, 2, "Trend",     text_color=color.gray,  text_size=size.small)
+    table.cell(tbl, 1, 2, uptrend ? "UP ▲" : "DOWN ▼", text_color=uptrend ? color.lime : color.red, text_size=size.small)
+    table.cell(tbl, 0, 3, "Vol Spike", text_color=color.gray,  text_size=size.small)
+    table.cell(tbl, 1, 3, volSpike ? "YES ✓" : "NO", text_color=volSpike ? color.purple : color.gray, text_size=size.small)
+    table.cell(tbl, 0, 4, "Session",   text_color=color.gray,  text_size=size.small)
+    table.cell(tbl, 1, 4, inSession ? "ACTIVE" : "OFF", text_color=inSession ? color.lime : color.gray, text_size=size.small)
