@@ -8,7 +8,7 @@ strategy("Fib Strategy v2", overlay=true,
 // ─── Inputs ───────────────────────────────────────────────────────────────────
 pivLeft   = input.int(5,    "Pivot Left Bars",            minval=1,   group="Pivots")
 pivRight  = input.int(2,    "Pivot Right Bars",           minval=1,   group="Pivots")
-showDebug = input.bool(false, "Show Debug Background",                group="Display")
+showDebug = input.bool(true,  "Show Debug Background",                group="Display")
 
 // ─── Pivot Detection ──────────────────────────────────────────────────────────
 // rightBars=2 confirms pivot just 2 bars after it forms (vs 5 before)
@@ -78,11 +78,13 @@ bgcolor(showDebug and downtrend                ? color.new(color.red,    92) : n
 bgcolor(showDebug and (longGP   or long786)    ? color.new(color.blue,   80) : na)
 bgcolor(showDebug and (shortGP  or short786)   ? color.new(color.orange, 80) : na)
 
-// ─── Entry Conditions ─────────────────────────────────────────────────────────
-longEntry  = uptrend   and (longGP  or long786)  and strategy.position_size == 0
-shortEntry = downtrend and (shortGP or short786) and strategy.position_size == 0
+// ─── Entry Conditions (trend filter removed for diagnostics) ─────────────────
+// Long: price touches GP or 786 from above (retracing from a high)
+// Short: price touches GP or 786 from below (bouncing from a low)
+// Priority: long fires first if both zones hit simultaneously
+longEntry  = hasPivots and (longGP  or long786)  and strategy.position_size == 0
+shortEntry = hasPivots and (shortGP or short786) and strategy.position_size == 0 and not longEntry
 
-// ─── Trade Execution (fills at bar close via process_orders_on_close=true) ────
 if longEntry
     strategy.entry("Long", strategy.long)
     strategy.exit("LX", "Long", stop=longSL, limit=longTP)
