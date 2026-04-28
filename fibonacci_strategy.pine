@@ -3,314 +3,125 @@ strategy("Fib Strategy v2", overlay=true,
          default_qty_type=strategy.percent_of_equity, default_qty_value=2,
          commission_type=strategy.commission.percent, commission_value=0.02,
          slippage=1, max_bars_back=500,
-         max_lines_count=200, max_labels_count=100, max_boxes_count=50)
+         max_lines_count=100, max_labels_count=50, max_boxes_count=20)
 
-// ─── Groups ───────────────────────────────────────────────────────────────────
-g_risk   = "Risk Management"
-g_entry  = "Entry Filters"
-g_time   = "Time Filter"
-g_pivot  = "Pivot Settings"
-g_levels = "Fib Levels"
-g_boxes  = "Fib Boxes"
-g_vol    = "Volume Settings"
+// ─── Inputs ───────────────────────────────────────────────────────────────────
+pivLeft  = input.int(5,    "Pivot Left Bars",             minval=1,    group="Pivots")
+pivRight = input.int(5,    "Pivot Right Bars",            minval=1,    group="Pivots")
+slBuf    = input.float(0.05, "SL Buffer % beyond pivot",  minval=0, step=0.01, group="Risk")
 
-// ─── Risk Inputs ──────────────────────────────────────────────────────────────
-rrRatio   = input.float(2.0, "Risk:Reward Ratio",   minval=0.5, step=0.5,  group=g_risk)
-slAtrMult = input.float(1.5, "SL ATR Multiplier",   minval=0.5, step=0.25, group=g_risk)
-showSlTp  = input.bool(true, "Show SL/TP lines",                            group=g_risk)
-
-// ─── Entry Filter Inputs ──────────────────────────────────────────────────────
-requireVol    = input.bool(false, "Require Volume Spike",            group=g_entry)
-requireCandle = input.bool(false, "Require Candle Confirmation",     group=g_entry)
-useGP         = input.bool(true,  "Trade Golden Pocket (0.618-0.65)", group=g_entry)
-use786        = input.bool(true,  "Trade 0.786 Level",               group=g_entry)
-
-// ─── Time Filter Inputs ───────────────────────────────────────────────────────
-useTimeFilter = input.bool(true,           "Enable Session Filter",       group=g_time)
-sessionStr    = input.session("0930-1600", "Session (Exchange Timezone)", group=g_time)
-
-// ─── Pivot Inputs ─────────────────────────────────────────────────────────────
-pivotLeft   = input.int(5,    "Lookback Left",                             minval=1,              group=g_pivot)
-pivotRight  = input.int(5,    "Lookback Right",                            minval=1,              group=g_pivot)
-pivotTF     = input.timeframe("", "Pivot Timeframe (blank = chart)",                              group=g_pivot)
-showPivRay  = input.bool(true,    "Show Pivot H/L Ray",                                           group=g_pivot)
-colPivH     = input.color(color.red,   "High ray color",                                          group=g_pivot)
-colPivL     = input.color(color.green, "Low ray color",                                           group=g_pivot)
-pivLblPos   = input.string("Right", "Label position",  options=["Left","Right"],                  group=g_pivot)
-pivLblStyle = input.string("Label Box", "Label style", options=["Plain","Label Box"],             group=g_pivot)
-
-// ─── Fib Level Inputs ─────────────────────────────────────────────────────────
-fibMode = input.string("Both", "Fib Display", options=["Both","With Trend","Against Trend"], group=g_levels)
-fibLeft = input.int(10, "Extend left (bars past earlier pivot)", minval=0, group=g_levels)
-
-show00  = input.bool(true,  "0.0   — Origin pivot",   inline="f0",   group=g_levels)
-col00   = input.color(color.new(color.gray, 40), "",   inline="f0",   group=g_levels)
-show236 = input.bool(true,  "0.236 — TP1",             inline="f236", group=g_levels)
-col236  = input.color(color.lime,               "",    inline="f236", group=g_levels)
-show618 = input.bool(true,  "0.618 — Golden Pocket",   inline="f618", group=g_levels)
-col618  = input.color(color.aqua,               "",    inline="f618", group=g_levels)
-show65  = input.bool(true,  "0.65  — Golden Pocket",   inline="f65",  group=g_levels)
-col65   = input.color(color.teal,               "",    inline="f65",  group=g_levels)
-show786 = input.bool(true,  "0.786 — Entry zone",      inline="f786", group=g_levels)
-col786  = input.color(color.yellow,             "",    inline="f786", group=g_levels)
-show886 = input.bool(true,  "0.886 — SL ref",          inline="f886", group=g_levels)
-col886  = input.color(color.red,                "",    inline="f886", group=g_levels)
-show100 = input.bool(true,  "1.0   — Opposite pivot",  inline="f100", group=g_levels)
-col100  = input.color(color.new(color.gray, 40), "",   inline="f100", group=g_levels)
-
-// ─── Fib Box Inputs ───────────────────────────────────────────────────────────
-showBox  = input.bool(true,  "Show Golden Pocket box",                    group=g_boxes)
-colBoxUp = input.color(color.new(color.aqua,   80), "Up-fib box color",   group=g_boxes)
-colBoxDn = input.color(color.new(color.orange, 80), "Down-fib box color", group=g_boxes)
-
-// ─── Volume Inputs ────────────────────────────────────────────────────────────
-volAvgLen    = input.int(20,    "Volume Avg Length",               minval=1,   group=g_vol)
-volMult      = input.float(2.0, "Vol Spike Multiplier",            minval=1.0, group=g_vol, step=0.1)
-showVolColor = input.bool(true, "Color candles on vol spike",                  group=g_vol)
-colVolSpike  = input.color(color.new(color.purple, 50), "Vol spike candle color", group=g_vol)
+useVol       = input.bool(false, "Require Volume Spike",      group="Filters")
+volLen       = input.int(20,    "Vol Avg Length",  minval=1,  group="Filters")
+volMult      = input.float(2.0, "Vol Spike Mult",  minval=1.0, step=0.1, group="Filters")
+showVolColor = input.bool(true,  "Color vol spike candles",    group="Filters")
+colVolSpike  = input.color(color.new(color.purple, 50), "Vol spike color", group="Filters")
 
 // ─── Volume ───────────────────────────────────────────────────────────────────
-avgVol   = ta.sma(volume, volAvgLen)
+avgVol   = ta.sma(volume, volLen)
 volSpike = volume > avgVol * volMult
 barcolor(showVolColor and volSpike ? colVolSpike : na)
 
 // ─── Pivot Detection ──────────────────────────────────────────────────────────
-_tf   = pivotTF == "" ? timeframe.period : pivotTF
-isHTF = pivotTF != ""
-
-[pivHigh, pivLow] = request.security(syminfo.tickerid, _tf,
-     [ta.pivothigh(high, pivotLeft, pivotRight), ta.pivotlow(low, pivotLeft, pivotRight)],
-     lookahead=barmerge.lookahead_off)
+pivH = ta.pivothigh(high, pivLeft, pivRight)
+pivL = ta.pivotlow(low,  pivLeft, pivRight)
 
 var float lastPH    = na
 var int   lastPHBar = na
 var float lastPL    = na
 var int   lastPLBar = na
 
-newHigh = not na(pivHigh)
-newLow  = not na(pivLow)
+if not na(pivH)
+    lastPH    := pivH
+    lastPHBar := bar_index - pivRight
 
-// ─── Pivot Ray Helpers ────────────────────────────────────────────────────────
-var line  pivHRayLine = na
-var label pivHRayLbl  = na
-var line  pivLRayLine = na
-var label pivLRayLbl  = na
+if not na(pivL)
+    lastPL    := pivL
+    lastPLBar := bar_index - pivRight
 
-pivLblStyleVal(isHigh) =>
-    if pivLblStyle == "Plain"
-        label.style_none
-    else
-        pivLblPos == "Left" ? label.style_label_right : label.style_label_left
-
-drawPivRay(price, isHigh, anchorBar) =>
-    col    = isHigh ? colPivH : colPivL
-    lbl    = isHigh ? "H: " + str.tostring(price, "#.####") : "L: " + str.tostring(price, "#.####")
-    lblBar = pivLblPos == "Left" ? anchorBar - fibLeft : bar_index + 3
-    ln     = line.new(anchorBar - fibLeft, price, bar_index + 1, price, extend=extend.right, color=col, width=1, style=line.style_dashed)
-    lb     = label.new(lblBar, price, lbl, style=pivLblStyleVal(isHigh), color=col, textcolor=color.white, size=size.small)
-    [ln, lb]
-
-if newHigh
-    lastPH    := pivHigh
-    lastPHBar := isHTF ? bar_index : bar_index - pivotRight
-    if showPivRay
-        line.delete(pivHRayLine)
-        label.delete(pivHRayLbl)
-        [ln, lb] = drawPivRay(lastPH, true, lastPHBar)
-        pivHRayLine := ln
-        pivHRayLbl  := lb
-
-if newLow
-    lastPL    := pivLow
-    lastPLBar := isHTF ? bar_index : bar_index - pivotRight
-    if showPivRay
-        line.delete(pivLRayLine)
-        label.delete(pivLRayLbl)
-        [ln, lb] = drawPivRay(lastPL, false, lastPLBar)
-        pivLRayLine := ln
-        pivLRayLbl  := lb
-
-// ─── Fib Helpers ──────────────────────────────────────────────────────────────
-var fibRatios = array.from(0.0, 0.236, 0.618, 0.65, 0.786, 0.886, 1.0)
-var fibLabels = array.from("0.0", "0.236  TP1", "0.618", "0.65  GP", "0.786", "0.886  SL", "1.0")
-
-fibPrice(hi, lo, ratio, isUp) =>
-    isUp ? hi - (hi - lo) * ratio : lo + (hi - lo) * ratio
-
-fibColor(r) =>
-    if r == 0.236
-        col236
-    else if r == 0.618
-        col618
-    else if r == 0.65
-        col65
-    else if r == 0.786
-        col786
-    else if r == 0.886
-        col886
-    else if r == 1.0
-        col100
-    else
-        col00
-
-levelEnabled(r) =>
-    if r == 0.0
-        show00
-    else if r == 0.236
-        show236
-    else if r == 0.618
-        show618
-    else if r == 0.65
-        show65
-    else if r == 0.786
-        show786
-    else if r == 0.886
-        show886
-    else
-        show100
-
-// ─── Drawing Storage ──────────────────────────────────────────────────────────
-var line[]  allLines  = array.new_line()
-var label[] allFibLbs = array.new_label()
-var box[]   allBoxes  = array.new_box()
-
-clearAll() =>
-    for ln in allLines
-        line.delete(ln)
-    array.clear(allLines)
-    for lb in allFibLbs
-        label.delete(lb)
-    array.clear(allFibLbs)
-    for bx in allBoxes
-        box.delete(bx)
-    array.clear(allBoxes)
-
-drawFibSet(hi, lo, isUp, phBar, plBar) =>
-    leftBar = math.min(phBar, plBar) - fibLeft
-    for i = 0 to array.size(fibRatios) - 1
-        r   = array.get(fibRatios, i)
-        lbl = array.get(fibLabels, i)
-        if levelEnabled(r)
-            p   = fibPrice(hi, lo, r, isUp)
-            col = fibColor(r)
-            ln  = line.new(leftBar, p, bar_index + 1, p, extend=extend.right, color=col, width=1, style=line.style_solid)
-            array.push(allLines, ln)
-            lb  = label.new(bar_index + 3, p, (isUp ? "▲ " : "▼ ") + lbl, style=label.style_label_left, color=color.new(color.black, 100), textcolor=col, size=size.tiny)
-            array.push(allFibLbs, lb)
-    if showBox
-        gp1 = fibPrice(hi, lo, 0.618, isUp)
-        gp2 = fibPrice(hi, lo, 0.65,  isUp)
-        gpC = isUp ? colBoxUp : colBoxDn
-        bx  = box.new(leftBar, math.max(gp1, gp2), bar_index + 1, math.min(gp1, gp2), bgcolor=gpC, border_color=color.new(color.gray, 80), extend=extend.right)
-        array.push(allBoxes, bx)
-
-// ─── Zone Math ────────────────────────────────────────────────────────────────
+// ─── Setup ────────────────────────────────────────────────────────────────────
 hasPivots = not na(lastPH) and not na(lastPL)
 rng       = hasPivots ? lastPH - lastPL : na
 
-// Trend: determined by which pivot formed most recently
-// Last pivot = high → prior move was up → now retracing → look for long
-// Last pivot = low  → prior move was down → now bouncing → look for short
+// Trend determined by which pivot formed most recently:
+//   last pivot = HIGH → uptrend retracement → look for long at GP/786
+//   last pivot = LOW  → downtrend bounce    → look for short at GP/786
 uptrend   = hasPivots and lastPHBar > lastPLBar
 downtrend = hasPivots and lastPLBar > lastPHBar
 
-upGP_hi = hasPivots ? lastPH - rng * 0.618 : na
-upGP_lo = hasPivots ? lastPH - rng * 0.650 : na
-up786   = hasPivots ? lastPH - rng * 0.786 : na
+// Long levels: price pulls back from the high toward the low
+longGP_hi = hasPivots ? lastPH - rng * 0.618 : na  // top of GP zone
+longGP_lo = hasPivots ? lastPH - rng * 0.650 : na  // bottom of GP zone
+long786   = hasPivots ? lastPH - rng * 0.786 : na
+longTP    = hasPivots ? lastPH - rng * 0.236 : na  // TP at 0.236
+longSL    = hasPivots ? lastPL  * (1 - slBuf / 100) : na  // below pivot low
 
-dnGP_lo = hasPivots ? lastPL + rng * 0.618 : na
-dnGP_hi = hasPivots ? lastPL + rng * 0.650 : na
-dn786   = hasPivots ? lastPL + rng * 0.786 : na
+// Short levels: price bounces up from the low toward the high
+shortGP_lo = hasPivots ? lastPL + rng * 0.618 : na  // bottom of GP zone
+shortGP_hi = hasPivots ? lastPL + rng * 0.650 : na  // top of GP zone
+short786   = hasPivots ? lastPL + rng * 0.786 : na
+shortTP    = hasPivots ? lastPL + rng * 0.236 : na  // TP at 0.236
+shortSL    = hasPivots ? lastPH * (1 + slBuf / 100) : na  // above pivot high
 
-upGPt  = hasPivots and low  <= upGP_hi and high >= upGP_lo
-dnGPt  = hasPivots and high >= dnGP_lo and low  <= dnGP_hi
-up786t = hasPivots and low  <= up786   and high >= up786
-dn786t = hasPivots and high >= dn786   and low  <= dn786
-
-if (newHigh or newLow) and hasPivots
-    clearAll()
-    _up = lastPHBar > lastPLBar
-    drawUp = fibMode == "Both" or (fibMode == "With Trend" and _up) or (fibMode == "Against Trend" and not _up)
-    drawDn = fibMode == "Both" or (fibMode == "With Trend" and not _up) or (fibMode == "Against Trend" and _up)
-    if drawUp
-        drawFibSet(lastPH, lastPL, true,  lastPHBar, lastPLBar)
-    if drawDn
-        drawFibSet(lastPH, lastPL, false, lastPHBar, lastPLBar)
-
-// ─── Session Filter ───────────────────────────────────────────────────────────
-inSession = not useTimeFilter or not na(time(timeframe.period, sessionStr))
-
-// ─── ATR ──────────────────────────────────────────────────────────────────────
-atrVal = ta.atr(14)
+// ─── Zone Touch ───────────────────────────────────────────────────────────────
+longGPz   = hasPivots and low <= longGP_hi  and high >= longGP_lo
+long786z  = hasPivots and low <= long786    and high >= long786
+shortGPz  = hasPivots and high >= shortGP_lo and low <= shortGP_hi
+short786z = hasPivots and high >= short786   and low <= short786
 
 // ─── Entry Conditions ─────────────────────────────────────────────────────────
-longFibZone  = (useGP and upGPt) or (use786 and up786t)
-shortFibZone = (useGP and dnGPt) or (use786 and dn786t)
-
-longCandle  = not requireCandle or close > open
-shortCandle = not requireCandle or close < open
-
-longCondition  = inSession and longFibZone  and uptrend   and longCandle  and
-                 (not requireVol or volSpike) and strategy.position_size == 0
-
-shortCondition = inSession and shortFibZone and downtrend and shortCandle and
-                 (not requireVol or volSpike) and strategy.position_size == 0
+longEntry  = uptrend   and (longGPz  or long786z)  and (not useVol or volSpike) and strategy.position_size == 0
+shortEntry = downtrend and (shortGPz or short786z) and (not useVol or volSpike) and strategy.position_size == 0
 
 // ─── Trade Execution ──────────────────────────────────────────────────────────
-var float activeSL = na
-var float activeTP = na
-var line  slLine   = na
-var line  tpLine   = na
-
-if longCondition
-    activeSL := close - atrVal * slAtrMult
-    activeTP := close + (close - activeSL) * rrRatio
+if longEntry
     strategy.entry("Long", strategy.long)
-    strategy.exit("Long Exit", from_entry="Long", stop=activeSL, limit=activeTP)
-    if showSlTp
-        line.delete(slLine)
-        line.delete(tpLine)
-        slLine := line.new(bar_index, activeSL, bar_index + 1, activeSL, extend=extend.right, color=color.red,   width=2, style=line.style_dashed)
-        tpLine := line.new(bar_index, activeTP, bar_index + 1, activeTP, extend=extend.right, color=color.green, width=2, style=line.style_dashed)
+    strategy.exit("Long Exit", from_entry="Long", stop=longSL, limit=longTP)
 
-if shortCondition
-    activeSL := close + atrVal * slAtrMult
-    activeTP := close - (activeSL - close) * rrRatio
+if shortEntry
     strategy.entry("Short", strategy.short)
-    strategy.exit("Short Exit", from_entry="Short", stop=activeSL, limit=activeTP)
-    if showSlTp
-        line.delete(slLine)
-        line.delete(tpLine)
-        slLine := line.new(bar_index, activeSL, bar_index + 1, activeSL, extend=extend.right, color=color.red,   width=2, style=line.style_dashed)
-        tpLine := line.new(bar_index, activeTP, bar_index + 1, activeTP, extend=extend.right, color=color.green, width=2, style=line.style_dashed)
+    strategy.exit("Short Exit", from_entry="Short", stop=shortSL, limit=shortTP)
 
-if strategy.position_size == 0 and strategy.position_size[1] != 0
-    line.delete(slLine)
-    line.delete(tpLine)
-    slLine   := na
-    tpLine   := na
-    activeSL := na
-    activeTP := na
+// ─── Visualization ────────────────────────────────────────────────────────────
+var line ln_gpTop = na
+var line ln_gpBot = na
+var line ln_786   = na
+var line ln_tp    = na
+var line ln_sl    = na
+var line ln_pivH  = na
+var line ln_pivL  = na
+var box  bx_gp    = na
 
-// ─── Entry Shapes ─────────────────────────────────────────────────────────────
-plotshape(longCondition,  "Long Entry",  shape.triangleup,   location.belowbar, color.new(color.lime, 10), size=size.small)
-plotshape(shortCondition, "Short Entry", shape.triangledown,  location.abovebar, color.new(color.red,  10), size=size.small)
+if (not na(pivH) or not na(pivL)) and hasPivots
+    line.delete(ln_gpTop), line.delete(ln_gpBot), line.delete(ln_786)
+    line.delete(ln_tp),    line.delete(ln_sl)
+    line.delete(ln_pivH),  line.delete(ln_pivL)
+    box.delete(bx_gp)
+
+    lft = math.min(lastPHBar, lastPLBar) - 5
+
+    ln_pivH := line.new(lastPHBar, lastPH, bar_index + 1, lastPH, extend=extend.right, color=color.red,   width=1, style=line.style_dashed)
+    ln_pivL := line.new(lastPLBar, lastPL, bar_index + 1, lastPL, extend=extend.right, color=color.green, width=1, style=line.style_dashed)
+
+    if uptrend
+        bx_gp    := box.new(lft, longGP_hi, bar_index + 1, longGP_lo, bgcolor=color.new(color.aqua, 85), border_color=color.new(color.aqua, 60), extend=extend.right)
+        ln_gpTop := line.new(lft, longGP_hi, bar_index + 1, longGP_hi, extend=extend.right, color=color.aqua,   width=1)
+        ln_gpBot := line.new(lft, longGP_lo, bar_index + 1, longGP_lo, extend=extend.right, color=color.aqua,   width=1)
+        ln_786   := line.new(lft, long786,   bar_index + 1, long786,   extend=extend.right, color=color.yellow, width=1)
+        ln_tp    := line.new(lft, longTP,    bar_index + 1, longTP,    extend=extend.right, color=color.lime,   width=1, style=line.style_dotted)
+        ln_sl    := line.new(lft, longSL,    bar_index + 1, longSL,    extend=extend.right, color=color.red,    width=1, style=line.style_dotted)
+
+    if downtrend
+        bx_gp    := box.new(lft, shortGP_hi, bar_index + 1, shortGP_lo, bgcolor=color.new(color.orange, 85), border_color=color.new(color.orange, 60), extend=extend.right)
+        ln_gpTop := line.new(lft, shortGP_hi, bar_index + 1, shortGP_hi, extend=extend.right, color=color.orange, width=1)
+        ln_gpBot := line.new(lft, shortGP_lo, bar_index + 1, shortGP_lo, extend=extend.right, color=color.orange, width=1)
+        ln_786   := line.new(lft, short786,   bar_index + 1, short786,   extend=extend.right, color=color.yellow, width=1)
+        ln_tp    := line.new(lft, shortTP,    bar_index + 1, shortTP,    extend=extend.right, color=color.lime,   width=1, style=line.style_dotted)
+        ln_sl    := line.new(lft, shortSL,    bar_index + 1, shortSL,    extend=extend.right, color=color.red,    width=1, style=line.style_dotted)
+
+// ─── Entry Markers ────────────────────────────────────────────────────────────
+plotshape(longEntry,  "Long",  shape.triangleup,   location.belowbar, color.lime, size=size.small)
+plotshape(shortEntry, "Short", shape.triangledown,  location.abovebar, color.red,  size=size.small)
 
 // ─── Alerts ───────────────────────────────────────────────────────────────────
-alertcondition(longCondition,  "Long Entry",  "Fib Long: {{ticker}} @ {{close}}")
-alertcondition(shortCondition, "Short Entry", "Fib Short: {{ticker}} @ {{close}}")
-
-// ─── Status Table ─────────────────────────────────────────────────────────────
-var table tbl = table.new(position.bottom_right, 2, 5, bgcolor=color.new(color.black, 70), border_color=color.new(color.gray, 50), border_width=1)
-
-if barstate.islast
-    table.cell(tbl, 0, 0, "Pivot H",   text_color=color.red,   text_size=size.small)
-    table.cell(tbl, 1, 0, hasPivots ? str.tostring(lastPH, "#.####") : "—", text_color=color.white, text_size=size.small)
-    table.cell(tbl, 0, 1, "Pivot L",   text_color=color.lime,  text_size=size.small)
-    table.cell(tbl, 1, 1, hasPivots ? str.tostring(lastPL, "#.####") : "—", text_color=color.white, text_size=size.small)
-    table.cell(tbl, 0, 2, "Trend",     text_color=color.gray,  text_size=size.small)
-    table.cell(tbl, 1, 2, uptrend ? "UP ▲" : "DOWN ▼", text_color=uptrend ? color.lime : color.red, text_size=size.small)
-    table.cell(tbl, 0, 3, "Vol Spike", text_color=color.gray,  text_size=size.small)
-    table.cell(tbl, 1, 3, volSpike ? "YES ✓" : "NO", text_color=volSpike ? color.purple : color.gray, text_size=size.small)
-    table.cell(tbl, 0, 4, "Session",   text_color=color.gray,  text_size=size.small)
-    table.cell(tbl, 1, 4, inSession ? "ACTIVE" : "OFF", text_color=inSession ? color.lime : color.gray, text_size=size.small)
+alertcondition(longEntry,  "Long Entry",  "Fib Long: {{ticker}} @ {{close}}")
+alertcondition(shortEntry, "Short Entry", "Fib Short: {{ticker}} @ {{close}}")
