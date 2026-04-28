@@ -21,9 +21,9 @@ slAtrMult = input.float(1.5, "SL ATR Multiplier",   minval=0.5, step=0.25, group
 showSlTp  = input.bool(true, "Show SL/TP lines",                            group=g_risk)
 
 // ─── Entry Filter Inputs ──────────────────────────────────────────────────────
-requireEMA    = input.bool(true,  "Require EMA Confluence",          group=g_entry)
+requireEMA    = input.bool(false, "Require EMA Confluence",          group=g_entry)
 requireVol    = input.bool(false, "Require Volume Spike",            group=g_entry)
-requireCandle = input.bool(true,  "Require Candle Confirmation",     group=g_entry)
+requireCandle = input.bool(false, "Require Candle Confirmation",     group=g_entry)
 useGP         = input.bool(true,  "Trade Golden Pocket (0.618-0.65)", group=g_entry)
 use786        = input.bool(true,  "Trade 0.786 Level",               group=g_entry)
 
@@ -87,10 +87,6 @@ plot(ema200, "EMA 200", color=#E04040, linewidth=2)
 avgVol   = ta.sma(volume, volAvgLen)
 volSpike = volume > avgVol * volMult
 barcolor(showVolColor and volSpike ? colVolSpike : na)
-
-// ─── Trend ────────────────────────────────────────────────────────────────────
-uptrend   = close > ema50
-downtrend = close < ema50
 
 // ─── Pivot Detection ──────────────────────────────────────────────────────────
 _tf   = pivotTF == "" ? timeframe.period : pivotTF
@@ -230,8 +226,9 @@ drawFibSet(hi, lo, isUp, phBar, plBar) =>
 
 if (newHigh or newLow) and not na(lastPH) and not na(lastPL)
     clearAll()
-    drawUp = fibMode == "Both" or (fibMode == "With Trend" and uptrend) or (fibMode == "Against Trend" and not uptrend)
-    drawDn = fibMode == "Both" or (fibMode == "With Trend" and not uptrend) or (fibMode == "Against Trend" and uptrend)
+    _up = lastPHBar > lastPLBar
+    drawUp = fibMode == "Both" or (fibMode == "With Trend" and _up) or (fibMode == "Against Trend" and not _up)
+    drawDn = fibMode == "Both" or (fibMode == "With Trend" and not _up) or (fibMode == "Against Trend" and _up)
     if drawUp
         drawFibSet(lastPH, lastPL, true,  lastPHBar, lastPLBar)
     if drawDn
@@ -240,6 +237,10 @@ if (newHigh or newLow) and not na(lastPH) and not na(lastPL)
 // ─── Zone Math ────────────────────────────────────────────────────────────────
 hasPivots = not na(lastPH) and not na(lastPL)
 rng       = hasPivots ? lastPH - lastPL : na
+
+// ─── Trend (pivot-structure: last pivot was high = prior move was up = look for long retracement)
+uptrend   = hasPivots and lastPHBar > lastPLBar
+downtrend = hasPivots and lastPLBar > lastPHBar
 
 upGP_hi = hasPivots ? lastPH - rng * 0.618 : na
 upGP_lo = hasPivots ? lastPH - rng * 0.650 : na
