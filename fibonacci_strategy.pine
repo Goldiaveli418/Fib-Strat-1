@@ -1,163 +1,168 @@
 //@version=6
-strategy("Fib Strategy v2", overlay=true,
+strategy("ORB Breakout  |  NQ / ES", overlay=true,
          default_qty_type=strategy.percent_of_equity, default_qty_value=2,
          commission_type=strategy.commission.percent, commission_value=0.02,
-         slippage=1, max_bars_back=500,
-         calc_on_every_tick=true)
+         slippage=2, max_bars_back=500,
+         process_orders_on_close=true)
 
-// ─── Inputs ───────────────────────────────────────────────────────────────────
-pivLeft   = input.int(5,    "Pivot Left Bars",            minval=1,   group="Pivots")
-pivRight  = input.int(2,    "Pivot Right Bars",           minval=1,   group="Pivots")
-showDebug = input.bool(true,  "Show Debug Background",                group="Display")
+// ── Inputs ────────────────────────────────────────────────────────────────────
+i_orbWin    = input.string("30min", "ORB Window",
+                 options=["15min","30min","60min"],                             group="ORB")
+i_rr        = input.float(2.0,   "Reward : Risk",    minval=0.5, step=0.25,   group="Risk")
+i_minRng    = input.float(10.0,  "Min Range (pts)",  minval=0,                 group="Risk")
+i_maxRng    = input.float(500.0, "Max Range (pts)",  minval=0,                 group="Risk")
+i_volFilter = input.bool(true,   "Volume Spike",                               group="Filters")
+i_volMult   = input.float(1.5,   "  Multiplier",     minval=1.0, step=0.1,    group="Filters")
+i_rsiFilter = input.bool(true,   "RSI Momentum",                               group="Filters")
+i_gapFilter = input.bool(true,   "Gap-Direction Bias",                         group="Filters")
+i_dir       = input.string("Both","Trade Direction",
+                 options=["Both","Long Only","Short Only"],                     group="Filters")
+i_debug     = input.bool(false,  "Session Colors",                             group="Display")
 
-// ─── Pivot Detection ──────────────────────────────────────────────────────────
-// rightBars=2 confirms pivot just 2 bars after it forms (vs 5 before)
-pivH = ta.pivothigh(high, pivLeft, pivRight)
-pivL = ta.pivotlow(low,  pivLeft, pivRight)
+// ── Session Windows (America/New_York) ────────────────────────────────────────
+TZ        = "America/New_York"
+orbSess   = i_orbWin == "15min" ? "0930-0945:23456" :
+            i_orbWin == "60min" ? "0930-1030:23456" : "0930-1000:23456"
+tradeSess = i_orbWin == "15min" ? "0945-1530:23456" :
+            i_orbWin == "60min" ? "1030-1530:23456" : "1000-1530:23456"
+fullSess  = "0930-1600:23456"
 
-var float lastPH    = na
-var int   lastPHBar = na
-var float lastPL    = na
-var int   lastPLBar = na
+inORB      = not na(time(timeframe.period, orbSess,   TZ))
+inTrade    = not na(time(timeframe.period, tradeSess, TZ))
+inFullSess = not na(time(timeframe.period, fullSess,  TZ))
+newDay     = inORB and not inORB[1]
 
-if not na(pivH)
-    lastPH    := pivH
-    lastPHBar := bar_index - pivRight
+// ── ORB State ─────────────────────────────────────────────────────────────────
+var float orbHigh    = na
+var float orbLow     = na
+var float orbOpen    = na
+var int   orbStartBr = na
+var bool  orbLocked  = false
+var bool  longTaken  = false
+var bool  shortTaken = false
 
-if not na(pivL)
-    lastPL    := pivL
-    lastPLBar := bar_index - pivRight
+if newDay
+    orbHigh    := high
+    orbLow     := low
+    orbOpen    := open
+    orbStartBr := bar_index
+    orbLocked  := false
+    longTaken  := false
+    shortTaken := false
 
-// ─── Setup ────────────────────────────────────────────────────────────────────
-hasPivots = not na(lastPH) and not na(lastPL)
-rng       = hasPivots ? lastPH - lastPL : na
+if inORB and not orbLocked
+    orbHigh := math.max(nz(orbHigh, high), high)
+    orbLow  := math.min(nz(orbLow,  low),  low)
 
-// Last confirmed pivot = HIGH → we just had an up-move → retracement → long setup
-// Last confirmed pivot = LOW  → we just had a down-move → bounce → short setup
-uptrend   = hasPivots and lastPHBar > lastPLBar
-downtrend = hasPivots and lastPLBar > lastPHBar
+// Lock ORB on the first bar after the opening range window closes
+if inORB[1] and not inORB and not orbLocked and not na(orbHigh)
+    orbLocked := true
 
-// ─── Fib Levels from HIGH (long retracement set) ──────────────────────────────
-fH_0    = hasPivots ? lastPH                   : na
-fH_236  = hasPivots ? lastPH - rng * 0.236    : na
-fH_382  = hasPivots ? lastPH - rng * 0.382    : na
-fH_50   = hasPivots ? lastPH - rng * 0.500    : na
-fH_618  = hasPivots ? lastPH - rng * 0.618    : na  // GP top
-fH_65   = hasPivots ? lastPH - rng * 0.650    : na  // GP bottom
-fH_786  = hasPivots ? lastPH - rng * 0.786    : na
-fH_886  = hasPivots ? lastPH - rng * 0.886    : na
-fH_100  = hasPivots ? lastPL                   : na
+// ── Derived Values ────────────────────────────────────────────────────────────
+orbRange = orbHigh - orbLow
+orbMid   = (orbHigh + orbLow) / 2.0
+orbValid = orbLocked and orbRange >= i_minRng and orbRange <= i_maxRng
 
-// ─── Fib Levels from LOW (short retracement set) ──────────────────────────────
-fL_0    = hasPivots ? lastPL                   : na
-fL_236  = hasPivots ? lastPL + rng * 0.236    : na
-fL_382  = hasPivots ? lastPL + rng * 0.382    : na
-fL_50   = hasPivots ? lastPL + rng * 0.500    : na
-fL_618  = hasPivots ? lastPL + rng * 0.618    : na  // GP bottom
-fL_65   = hasPivots ? lastPL + rng * 0.650    : na  // GP top
-fL_786  = hasPivots ? lastPL + rng * 0.786    : na
-fL_886  = hasPivots ? lastPL + rng * 0.886    : na
-fL_100  = hasPivots ? lastPH                   : na
+// ── Gap Direction (prior day close vs today's open) ───────────────────────────
+prevDayClose = request.security(syminfo.tickerid, "D", close[1],
+                 lookahead=barmerge.lookahead_off)
+gapUp   = not na(prevDayClose) and not na(orbOpen) and orbOpen > prevDayClose
+gapDown = not na(prevDayClose) and not na(orbOpen) and orbOpen < prevDayClose
 
-// ─── SL / TP ──────────────────────────────────────────────────────────────────
-atr     = ta.atr(14)
-longSL  = hasPivots ? lastPL - atr : na       // 1 ATR below pivot low
-longTP  = fH_236                               // TP at 0.236 fib (near the high)
-shortSL = hasPivots ? lastPH + atr : na       // 1 ATR above pivot high
-shortTP = fL_236                               // TP at 0.236 fib (near the low)
+// ── Confirmation Filters ──────────────────────────────────────────────────────
+volAvg   = ta.sma(volume, 20)
+volSpike = volume > volAvg * i_volMult
+rsi14    = ta.rsi(close, 14)
 
-// ─── Zone Touch ───────────────────────────────────────────────────────────────
-longGP    = hasPivots and low  <= fH_618 and high >= fH_65
-long786   = hasPivots and low  <= fH_786 and high >= fH_786
-shortGP   = hasPivots and high >= fL_618 and low  <= fL_65
-short786  = hasPivots and high >= fL_786 and low  <= fL_786
+longConf   = (not i_volFilter or volSpike) and (not i_rsiFilter or rsi14 > 50)
+shortConf  = (not i_volFilter or volSpike) and (not i_rsiFilter or rsi14 < 50)
+longGapOk  = not i_gapFilter or gapUp   or (not gapUp and not gapDown)
+shortGapOk = not i_gapFilter or gapDown or (not gapUp and not gapDown)
 
-// ─── Debug (green = uptrend, red = downtrend, blue/orange = zone hit) ─────────
-bgcolor(showDebug and uptrend                  ? color.new(color.green,  92) : na)
-bgcolor(showDebug and downtrend                ? color.new(color.red,    92) : na)
-bgcolor(showDebug and (longGP   or long786)    ? color.new(color.blue,   80) : na)
-bgcolor(showDebug and (shortGP  or short786)   ? color.new(color.orange, 80) : na)
+// ── Entry Signals (close confirmation — no wick fakes) ────────────────────────
+noPos      = strategy.position_size == 0
+longBreak  = orbValid and inTrade and close > orbHigh and not longTaken  and noPos
+shortBreak = orbValid and inTrade and close < orbLow  and not shortTaken and noPos and not longBreak
 
-// ─── Entry Conditions (trend filter removed for diagnostics) ─────────────────
-// Long: price touches GP or 786 from above (retracing from a high)
-// Short: price touches GP or 786 from below (bouncing from a low)
-// Priority: long fires first if both zones hit simultaneously
-longEntry  = hasPivots and (longGP  or long786)  and strategy.position_size == 0
-shortEntry = hasPivots and (shortGP or short786) and strategy.position_size == 0 and not longEntry
+longEntry  = longBreak  and longConf  and longGapOk  and i_dir != "Short Only"
+shortEntry = shortBreak and shortConf and shortGapOk and i_dir != "Long Only"
 
+// ── Stop & Target (ORB boundary SL, fixed R:R TP) ─────────────────────────────
+longSL  = orbLow
+longTP  = close + (close - orbLow)   * i_rr
+shortSL = orbHigh
+shortTP = close - (orbHigh - close)  * i_rr
+
+// ── Execution ─────────────────────────────────────────────────────────────────
 if longEntry
     strategy.entry("Long", strategy.long)
     strategy.exit("LX", "Long", stop=longSL, limit=longTP)
+    longTaken := true
 
 if shortEntry
     strategy.entry("Short", strategy.short)
     strategy.exit("SX", "Short", stop=shortSL, limit=shortTP)
+    shortTaken := true
 
-// ─── Visualization ────────────────────────────────────────────────────────────
-var line[] fibLines = array.new_line()
-var box    gpBoxUp  = na
-var box    gpBoxDn  = na
-var line   pivHLine = na
-var line   pivLLine = na
+// ── Visualization ─────────────────────────────────────────────────────────────
+// Session background
+bgcolor(i_debug and inORB   ? color.new(color.blue,  90) : na)
+bgcolor(i_debug and inTrade ? color.new(color.green, 96) : na)
 
-if (not na(pivH) or not na(pivL)) and hasPivots
-    for l in fibLines
-        line.delete(l)
-    array.clear(fibLines)
-    box.delete(gpBoxUp)
-    box.delete(gpBoxDn)
-    line.delete(pivHLine)
-    line.delete(pivLLine)
+// ORB building box — grows live during the opening range window
+var box orbBox = na
+if newDay
+    box.delete(orbBox)
+    orbBox := box.new(bar_index, high, bar_index + 1, low,
+         bgcolor=color.new(color.blue, 82),
+         border_color=color.new(color.blue, 40),
+         border_width=1)
 
-    lft = math.min(lastPHBar, lastPLBar) - 10
-    rgt = bar_index + 1
+if inORB and not na(orbBox)
+    box.set_top(orbBox,    orbHigh)
+    box.set_bottom(orbBox, orbLow)
+    box.set_right(orbBox,  bar_index + 1)
 
-    pivHLine := line.new(lastPHBar, lastPH, rgt, lastPH, extend=extend.right, color=color.red,   width=1, style=line.style_dashed)
-    pivLLine := line.new(lastPLBar, lastPL, rgt, lastPL, extend=extend.right, color=color.green, width=1, style=line.style_dashed)
+// Locked ORB levels — flat lines drawn only during regular session hours
+plot(orbLocked and inFullSess ? orbHigh : na, "ORB High",
+     color=color.red,                 linewidth=2, style=plot.style_linebr)
+plot(orbLocked and inFullSess ? orbLow  : na, "ORB Low",
+     color=color.lime,                linewidth=2, style=plot.style_linebr)
+plot(orbLocked and inFullSess ? orbMid  : na, "ORB Mid",
+     color=color.new(color.gray, 50), linewidth=1, style=plot.style_linebr)
 
-    // GP zone boxes
-    gpBoxUp := box.new(lft, fH_618, rgt, fH_65, bgcolor=color.new(color.aqua,   85), border_color=color.new(color.aqua,   50), extend=extend.right)
-    gpBoxDn := box.new(lft, fL_65,  rgt, fL_618, bgcolor=color.new(color.purple, 75), border_color=color.new(color.purple, 40), extend=extend.right)
+// Entry markers
+plotshape(longEntry,  "Long",  shape.triangleup,   location.belowbar, color.lime, size=size.normal)
+plotshape(shortEntry, "Short", shape.triangledown,  location.abovebar, color.red,  size=size.normal)
 
-    // Up-fib lines (from HIGH, retracement levels)
-    array.push(fibLines, line.new(lft, fH_236, rgt, fH_236, extend=extend.right, color=color.lime,                  width=1))
-    array.push(fibLines, line.new(lft, fH_382, rgt, fH_382, extend=extend.right, color=color.new(color.green,  30), width=1))
-    array.push(fibLines, line.new(lft, fH_50,  rgt, fH_50,  extend=extend.right, color=color.new(color.white,  50), width=1))
-    array.push(fibLines, line.new(lft, fH_618, rgt, fH_618, extend=extend.right, color=color.aqua,                  width=1))
-    array.push(fibLines, line.new(lft, fH_65,  rgt, fH_65,  extend=extend.right, color=color.teal,                  width=1))
-    array.push(fibLines, line.new(lft, fH_786, rgt, fH_786, extend=extend.right, color=color.yellow,                width=1))
-    array.push(fibLines, line.new(lft, fH_886, rgt, fH_886, extend=extend.right, color=color.new(color.orange, 20), width=1))
-
-    // Down-fib lines (from LOW, retracement levels)
-    array.push(fibLines, line.new(lft, fL_236, rgt, fL_236, extend=extend.right, color=color.lime,                  width=1))
-    array.push(fibLines, line.new(lft, fL_382, rgt, fL_382, extend=extend.right, color=color.new(color.green,  30), width=1))
-    array.push(fibLines, line.new(lft, fL_50,  rgt, fL_50,  extend=extend.right, color=color.new(color.white,  50), width=1))
-    array.push(fibLines, line.new(lft, fL_618, rgt, fL_618, extend=extend.right, color=color.orange,                width=1))
-    array.push(fibLines, line.new(lft, fL_65,  rgt, fL_65,  extend=extend.right, color=color.red,                   width=1))
-    array.push(fibLines, line.new(lft, fL_786, rgt, fL_786, extend=extend.right, color=color.yellow,                width=1))
-    array.push(fibLines, line.new(lft, fL_886, rgt, fL_886, extend=extend.right, color=color.new(color.orange, 20), width=1))
-
-// ─── Entry Markers & Alerts ───────────────────────────────────────────────────
-plotshape(longEntry,  "Long",  shape.triangleup,   location.belowbar, color.lime, size=size.small)
-plotshape(shortEntry, "Short", shape.triangledown,  location.abovebar, color.red,  size=size.small)
-
-alertcondition(longEntry,  "Long Entry",  "Fib Long: {{ticker}} @ {{close}}")
-alertcondition(shortEntry, "Short Entry", "Fib Short: {{ticker}} @ {{close}}")
-
-// ─── Status Table ─────────────────────────────────────────────────────────────
-var table tbl = table.new(position.bottom_right, 2, 5,
-     bgcolor=color.new(color.black, 70), border_color=color.new(color.gray, 50), border_width=1)
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+var table dash = table.new(position.top_right, 2, 7,
+     bgcolor=color.new(color.black, 70),
+     border_color=color.new(color.gray, 50), border_width=1)
 
 if barstate.islast
-    table.cell(tbl, 0, 0, "Pivots", text_color=color.gray, text_size=size.small)
-    table.cell(tbl, 1, 0, hasPivots ? "YES" : "NO", text_color=hasPivots ? color.lime : color.red, text_size=size.small)
-    table.cell(tbl, 0, 1, "Trend",  text_color=color.gray, text_size=size.small)
-    table.cell(tbl, 1, 1, uptrend ? "UP ▲" : downtrend ? "DN ▼" : "—",
-         text_color=uptrend ? color.lime : downtrend ? color.red : color.gray, text_size=size.small)
-    table.cell(tbl, 0, 2, "PH",     text_color=color.red,  text_size=size.small)
-    table.cell(tbl, 1, 2, hasPivots ? str.tostring(lastPH, "#.##") : "—", text_color=color.white, text_size=size.small)
-    table.cell(tbl, 0, 3, "PL",     text_color=color.lime, text_size=size.small)
-    table.cell(tbl, 1, 3, hasPivots ? str.tostring(lastPL, "#.##") : "—", text_color=color.white, text_size=size.small)
-    table.cell(tbl, 0, 4, "Zone",   text_color=color.gray, text_size=size.small)
-    table.cell(tbl, 1, 4, longEntry ? "LONG ▲" : shortEntry ? "SHORT ▼" : "—",
-         text_color=longEntry ? color.lime : shortEntry ? color.red : color.gray, text_size=size.small)
+    table.cell(dash, 0, 0, "ORB",     text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 0, orbLocked ? "LOCKED" : inORB ? "BUILDING" : "—",
+         text_color=orbLocked ? color.lime : color.orange, text_size=size.small)
+    table.cell(dash, 0, 1, "High",    text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 1, not na(orbHigh) ? str.tostring(orbHigh, "#.##") : "—",
+         text_color=color.red, text_size=size.small)
+    table.cell(dash, 0, 2, "Low",     text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 2, not na(orbLow)  ? str.tostring(orbLow, "#.##") : "—",
+         text_color=color.lime, text_size=size.small)
+    table.cell(dash, 0, 3, "Range",   text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 3, orbLocked  ? str.tostring(orbRange, "#.##") + " pts" : "—",
+         text_color=color.white, text_size=size.small)
+    table.cell(dash, 0, 4, "Gap",     text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 4, gapUp ? "UP ▲" : gapDown ? "DN ▼" : "FLAT —",
+         text_color=gapUp ? color.lime : gapDown ? color.red : color.gray, text_size=size.small)
+    table.cell(dash, 0, 5, "Vol",     text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 5, volSpike ? "SPIKE ✓" : "low",
+         text_color=volSpike ? color.lime : color.gray, text_size=size.small)
+    table.cell(dash, 0, 6, "Session", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 6, inTrade ? "ACTIVE" : "—",
+         text_color=inTrade ? color.lime : color.gray, text_size=size.small)
+
+// ── Alerts ────────────────────────────────────────────────────────────────────
+alertcondition(longEntry,  "ORB Long",  "ORB Long: {{ticker}} closed above ORB high @ {{close}}")
+alertcondition(shortEntry, "ORB Short", "ORB Short: {{ticker}} closed below ORB low @ {{close}}")
