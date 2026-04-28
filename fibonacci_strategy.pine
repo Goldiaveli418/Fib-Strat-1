@@ -3,25 +3,15 @@ strategy("Fib Strategy v2", overlay=true,
          default_qty_type=strategy.percent_of_equity, default_qty_value=2,
          commission_type=strategy.commission.percent, commission_value=0.02,
          slippage=1, max_bars_back=500,
-         max_lines_count=100, max_labels_count=50, max_boxes_count=20)
+         process_orders_on_close=true)
 
 // ─── Inputs ───────────────────────────────────────────────────────────────────
-pivLeft  = input.int(5,    "Pivot Left Bars",             minval=1,    group="Pivots")
-pivRight = input.int(5,    "Pivot Right Bars",            minval=1,    group="Pivots")
-slBuf    = input.float(0.05, "SL Buffer % beyond pivot",  minval=0, step=0.01, group="Risk")
-
-useVol       = input.bool(false, "Require Volume Spike",      group="Filters")
-volLen       = input.int(20,    "Vol Avg Length",  minval=1,  group="Filters")
-volMult      = input.float(2.0, "Vol Spike Mult",  minval=1.0, step=0.1, group="Filters")
-showVolColor = input.bool(true,  "Color vol spike candles",    group="Filters")
-colVolSpike  = input.color(color.new(color.purple, 50), "Vol spike color", group="Filters")
-
-// ─── Volume ───────────────────────────────────────────────────────────────────
-avgVol   = ta.sma(volume, volLen)
-volSpike = volume > avgVol * volMult
-barcolor(showVolColor and volSpike ? colVolSpike : na)
+pivLeft   = input.int(5,    "Pivot Left Bars",            minval=1,   group="Pivots")
+pivRight  = input.int(2,    "Pivot Right Bars",           minval=1,   group="Pivots")
+showDebug = input.bool(false, "Show Debug Background",                group="Display")
 
 // ─── Pivot Detection ──────────────────────────────────────────────────────────
+// rightBars=2 confirms pivot just 2 bars after it forms (vs 5 before)
 pivH = ta.pivothigh(high, pivLeft, pivRight)
 pivL = ta.pivotlow(low,  pivLeft, pivRight)
 
@@ -42,86 +32,130 @@ if not na(pivL)
 hasPivots = not na(lastPH) and not na(lastPL)
 rng       = hasPivots ? lastPH - lastPL : na
 
-// Trend determined by which pivot formed most recently:
-//   last pivot = HIGH → uptrend retracement → look for long at GP/786
-//   last pivot = LOW  → downtrend bounce    → look for short at GP/786
+// Last confirmed pivot = HIGH → we just had an up-move → retracement → long setup
+// Last confirmed pivot = LOW  → we just had a down-move → bounce → short setup
 uptrend   = hasPivots and lastPHBar > lastPLBar
 downtrend = hasPivots and lastPLBar > lastPHBar
 
-// Long levels: price pulls back from the high toward the low
-longGP_hi = hasPivots ? lastPH - rng * 0.618 : na  // top of GP zone
-longGP_lo = hasPivots ? lastPH - rng * 0.650 : na  // bottom of GP zone
-long786   = hasPivots ? lastPH - rng * 0.786 : na
-longTP    = hasPivots ? lastPH - rng * 0.236 : na  // TP at 0.236
-longSL    = hasPivots ? lastPL  * (1 - slBuf / 100) : na  // below pivot low
+// ─── Fib Levels from HIGH (long retracement set) ──────────────────────────────
+fH_0    = hasPivots ? lastPH                   : na
+fH_236  = hasPivots ? lastPH - rng * 0.236    : na
+fH_382  = hasPivots ? lastPH - rng * 0.382    : na
+fH_50   = hasPivots ? lastPH - rng * 0.500    : na
+fH_618  = hasPivots ? lastPH - rng * 0.618    : na  // GP top
+fH_65   = hasPivots ? lastPH - rng * 0.650    : na  // GP bottom
+fH_786  = hasPivots ? lastPH - rng * 0.786    : na
+fH_886  = hasPivots ? lastPH - rng * 0.886    : na
+fH_100  = hasPivots ? lastPL                   : na
 
-// Short levels: price bounces up from the low toward the high
-shortGP_lo = hasPivots ? lastPL + rng * 0.618 : na  // bottom of GP zone
-shortGP_hi = hasPivots ? lastPL + rng * 0.650 : na  // top of GP zone
-short786   = hasPivots ? lastPL + rng * 0.786 : na
-shortTP    = hasPivots ? lastPL + rng * 0.236 : na  // TP at 0.236
-shortSL    = hasPivots ? lastPH * (1 + slBuf / 100) : na  // above pivot high
+// ─── Fib Levels from LOW (short retracement set) ──────────────────────────────
+fL_0    = hasPivots ? lastPL                   : na
+fL_236  = hasPivots ? lastPL + rng * 0.236    : na
+fL_382  = hasPivots ? lastPL + rng * 0.382    : na
+fL_50   = hasPivots ? lastPL + rng * 0.500    : na
+fL_618  = hasPivots ? lastPL + rng * 0.618    : na  // GP bottom
+fL_65   = hasPivots ? lastPL + rng * 0.650    : na  // GP top
+fL_786  = hasPivots ? lastPL + rng * 0.786    : na
+fL_886  = hasPivots ? lastPL + rng * 0.886    : na
+fL_100  = hasPivots ? lastPH                   : na
+
+// ─── SL / TP ──────────────────────────────────────────────────────────────────
+atr     = ta.atr(14)
+longSL  = hasPivots ? lastPL - atr : na       // 1 ATR below pivot low
+longTP  = fH_236                               // TP at 0.236 fib (near the high)
+shortSL = hasPivots ? lastPH + atr : na       // 1 ATR above pivot high
+shortTP = fL_236                               // TP at 0.236 fib (near the low)
 
 // ─── Zone Touch ───────────────────────────────────────────────────────────────
-longGPz   = hasPivots and low <= longGP_hi  and high >= longGP_lo
-long786z  = hasPivots and low <= long786    and high >= long786
-shortGPz  = hasPivots and high >= shortGP_lo and low <= shortGP_hi
-short786z = hasPivots and high >= short786   and low <= short786
+longGP    = hasPivots and low  <= fH_618 and high >= fH_65
+long786   = hasPivots and low  <= fH_786 and high >= fH_786
+shortGP   = hasPivots and high >= fL_618 and low  <= fL_65
+short786  = hasPivots and high >= fL_786 and low  <= fL_786
+
+// ─── Debug (green = uptrend, red = downtrend, blue/orange = zone hit) ─────────
+bgcolor(showDebug and uptrend                  ? color.new(color.green,  92) : na)
+bgcolor(showDebug and downtrend                ? color.new(color.red,    92) : na)
+bgcolor(showDebug and (longGP   or long786)    ? color.new(color.blue,   80) : na)
+bgcolor(showDebug and (shortGP  or short786)   ? color.new(color.orange, 80) : na)
 
 // ─── Entry Conditions ─────────────────────────────────────────────────────────
-longEntry  = uptrend   and (longGPz  or long786z)  and (not useVol or volSpike) and strategy.position_size == 0
-shortEntry = downtrend and (shortGPz or short786z) and (not useVol or volSpike) and strategy.position_size == 0
+longEntry  = uptrend   and (longGP  or long786)  and strategy.position_size == 0
+shortEntry = downtrend and (shortGP or short786) and strategy.position_size == 0
 
-// ─── Trade Execution ──────────────────────────────────────────────────────────
+// ─── Trade Execution (fills at bar close via process_orders_on_close=true) ────
 if longEntry
     strategy.entry("Long", strategy.long)
-    strategy.exit("Long Exit", from_entry="Long", stop=longSL, limit=longTP)
+    strategy.exit("LX", "Long", stop=longSL, limit=longTP)
 
 if shortEntry
     strategy.entry("Short", strategy.short)
-    strategy.exit("Short Exit", from_entry="Short", stop=shortSL, limit=shortTP)
+    strategy.exit("SX", "Short", stop=shortSL, limit=shortTP)
 
 // ─── Visualization ────────────────────────────────────────────────────────────
-var line ln_gpTop = na
-var line ln_gpBot = na
-var line ln_786   = na
-var line ln_tp    = na
-var line ln_sl    = na
-var line ln_pivH  = na
-var line ln_pivL  = na
-var box  bx_gp    = na
+var line[] fibLines = array.new_line()
+var box    gpBoxUp  = na
+var box    gpBoxDn  = na
+var line   pivHLine = na
+var line   pivLLine = na
 
 if (not na(pivH) or not na(pivL)) and hasPivots
-    line.delete(ln_gpTop), line.delete(ln_gpBot), line.delete(ln_786)
-    line.delete(ln_tp),    line.delete(ln_sl)
-    line.delete(ln_pivH),  line.delete(ln_pivL)
-    box.delete(bx_gp)
+    for l in fibLines
+        line.delete(l)
+    array.clear(fibLines)
+    box.delete(gpBoxUp)
+    box.delete(gpBoxDn)
+    line.delete(pivHLine)
+    line.delete(pivLLine)
 
-    lft = math.min(lastPHBar, lastPLBar) - 5
+    lft = math.min(lastPHBar, lastPLBar) - 10
+    rgt = bar_index + 1
 
-    ln_pivH := line.new(lastPHBar, lastPH, bar_index + 1, lastPH, extend=extend.right, color=color.red,   width=1, style=line.style_dashed)
-    ln_pivL := line.new(lastPLBar, lastPL, bar_index + 1, lastPL, extend=extend.right, color=color.green, width=1, style=line.style_dashed)
+    pivHLine := line.new(lastPHBar, lastPH, rgt, lastPH, extend=extend.right, color=color.red,   width=1, style=line.style_dashed)
+    pivLLine := line.new(lastPLBar, lastPL, rgt, lastPL, extend=extend.right, color=color.green, width=1, style=line.style_dashed)
 
-    if uptrend
-        bx_gp    := box.new(lft, longGP_hi, bar_index + 1, longGP_lo, bgcolor=color.new(color.aqua, 85), border_color=color.new(color.aqua, 60), extend=extend.right)
-        ln_gpTop := line.new(lft, longGP_hi, bar_index + 1, longGP_hi, extend=extend.right, color=color.aqua,   width=1)
-        ln_gpBot := line.new(lft, longGP_lo, bar_index + 1, longGP_lo, extend=extend.right, color=color.aqua,   width=1)
-        ln_786   := line.new(lft, long786,   bar_index + 1, long786,   extend=extend.right, color=color.yellow, width=1)
-        ln_tp    := line.new(lft, longTP,    bar_index + 1, longTP,    extend=extend.right, color=color.lime,   width=1, style=line.style_dotted)
-        ln_sl    := line.new(lft, longSL,    bar_index + 1, longSL,    extend=extend.right, color=color.red,    width=1, style=line.style_dotted)
+    // GP zone boxes
+    gpBoxUp := box.new(lft, fH_618, rgt, fH_65, bgcolor=color.new(color.aqua,   85), border_color=color.new(color.aqua,   50), extend=extend.right)
+    gpBoxDn := box.new(lft, fL_65,  rgt, fL_618, bgcolor=color.new(color.purple, 75), border_color=color.new(color.purple, 40), extend=extend.right)
 
-    if downtrend
-        bx_gp    := box.new(lft, shortGP_hi, bar_index + 1, shortGP_lo, bgcolor=color.new(color.orange, 85), border_color=color.new(color.orange, 60), extend=extend.right)
-        ln_gpTop := line.new(lft, shortGP_hi, bar_index + 1, shortGP_hi, extend=extend.right, color=color.orange, width=1)
-        ln_gpBot := line.new(lft, shortGP_lo, bar_index + 1, shortGP_lo, extend=extend.right, color=color.orange, width=1)
-        ln_786   := line.new(lft, short786,   bar_index + 1, short786,   extend=extend.right, color=color.yellow, width=1)
-        ln_tp    := line.new(lft, shortTP,    bar_index + 1, shortTP,    extend=extend.right, color=color.lime,   width=1, style=line.style_dotted)
-        ln_sl    := line.new(lft, shortSL,    bar_index + 1, shortSL,    extend=extend.right, color=color.red,    width=1, style=line.style_dotted)
+    // Up-fib lines (from HIGH, retracement levels)
+    array.push(fibLines, line.new(lft, fH_236, rgt, fH_236, extend=extend.right, color=color.lime,                  width=1))
+    array.push(fibLines, line.new(lft, fH_382, rgt, fH_382, extend=extend.right, color=color.new(color.green,  30), width=1))
+    array.push(fibLines, line.new(lft, fH_50,  rgt, fH_50,  extend=extend.right, color=color.new(color.white,  50), width=1))
+    array.push(fibLines, line.new(lft, fH_618, rgt, fH_618, extend=extend.right, color=color.aqua,                  width=1))
+    array.push(fibLines, line.new(lft, fH_65,  rgt, fH_65,  extend=extend.right, color=color.teal,                  width=1))
+    array.push(fibLines, line.new(lft, fH_786, rgt, fH_786, extend=extend.right, color=color.yellow,                width=1))
+    array.push(fibLines, line.new(lft, fH_886, rgt, fH_886, extend=extend.right, color=color.new(color.orange, 20), width=1))
 
-// ─── Entry Markers ────────────────────────────────────────────────────────────
+    // Down-fib lines (from LOW, retracement levels)
+    array.push(fibLines, line.new(lft, fL_236, rgt, fL_236, extend=extend.right, color=color.lime,                  width=1))
+    array.push(fibLines, line.new(lft, fL_382, rgt, fL_382, extend=extend.right, color=color.new(color.green,  30), width=1))
+    array.push(fibLines, line.new(lft, fL_50,  rgt, fL_50,  extend=extend.right, color=color.new(color.white,  50), width=1))
+    array.push(fibLines, line.new(lft, fL_618, rgt, fL_618, extend=extend.right, color=color.orange,                width=1))
+    array.push(fibLines, line.new(lft, fL_65,  rgt, fL_65,  extend=extend.right, color=color.red,                   width=1))
+    array.push(fibLines, line.new(lft, fL_786, rgt, fL_786, extend=extend.right, color=color.yellow,                width=1))
+    array.push(fibLines, line.new(lft, fL_886, rgt, fL_886, extend=extend.right, color=color.new(color.orange, 20), width=1))
+
+// ─── Entry Markers & Alerts ───────────────────────────────────────────────────
 plotshape(longEntry,  "Long",  shape.triangleup,   location.belowbar, color.lime, size=size.small)
 plotshape(shortEntry, "Short", shape.triangledown,  location.abovebar, color.red,  size=size.small)
 
-// ─── Alerts ───────────────────────────────────────────────────────────────────
 alertcondition(longEntry,  "Long Entry",  "Fib Long: {{ticker}} @ {{close}}")
 alertcondition(shortEntry, "Short Entry", "Fib Short: {{ticker}} @ {{close}}")
+
+// ─── Status Table ─────────────────────────────────────────────────────────────
+var table tbl = table.new(position.bottom_right, 2, 5,
+     bgcolor=color.new(color.black, 70), border_color=color.new(color.gray, 50), border_width=1)
+
+if barstate.islast
+    table.cell(tbl, 0, 0, "Pivots", text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 0, hasPivots ? "YES" : "NO", text_color=hasPivots ? color.lime : color.red, text_size=size.small)
+    table.cell(tbl, 0, 1, "Trend",  text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 1, uptrend ? "UP ▲" : downtrend ? "DN ▼" : "—",
+         text_color=uptrend ? color.lime : downtrend ? color.red : color.gray, text_size=size.small)
+    table.cell(tbl, 0, 2, "PH",     text_color=color.red,  text_size=size.small)
+    table.cell(tbl, 1, 2, hasPivots ? str.tostring(lastPH, "#.##") : "—", text_color=color.white, text_size=size.small)
+    table.cell(tbl, 0, 3, "PL",     text_color=color.lime, text_size=size.small)
+    table.cell(tbl, 1, 3, hasPivots ? str.tostring(lastPL, "#.##") : "—", text_color=color.white, text_size=size.small)
+    table.cell(tbl, 0, 4, "Zone",   text_color=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 4, longEntry ? "LONG ▲" : shortEntry ? "SHORT ▼" : "—",
+         text_color=longEntry ? color.lime : shortEntry ? color.red : color.gray, text_size=size.small)
