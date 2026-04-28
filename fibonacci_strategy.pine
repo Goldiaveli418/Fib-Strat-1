@@ -39,10 +39,8 @@ i_debug     = input.bool(false, "Show Session Colors",                         g
 
 // ── Session Windows (America/New_York) ────────────────────────────────────────
 TZ        = "America/New_York"
-orbSess   = i_orbWin == "15min" ? "0930-0945:23456" :
-            i_orbWin == "60min" ? "0930-1030:23456" : "0930-1000:23456"
-tradeSess = i_orbWin == "15min" ? "0945-1530:23456" :
-            i_orbWin == "60min" ? "1030-1530:23456" : "1000-1530:23456"
+orbSess   = i_orbWin == "15min" ? "0930-0945:23456" : i_orbWin == "60min" ? "0930-1030:23456" : "0930-1000:23456"
+tradeSess = i_orbWin == "15min" ? "0945-1530:23456" : i_orbWin == "60min" ? "1030-1530:23456" : "1000-1530:23456"
 fullSess  = "0930-1600:23456"
 
 inORB      = not na(time(timeframe.period, orbSess,   TZ))
