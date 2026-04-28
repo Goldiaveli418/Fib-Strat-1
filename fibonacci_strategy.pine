@@ -5,19 +5,37 @@ strategy("ORB Breakout  |  NQ / ES", overlay=true,
          slippage=2, max_bars_back=500,
          process_orders_on_close=true)
 
-// ── Inputs ────────────────────────────────────────────────────────────────────
+// ── ORB ───────────────────────────────────────────────────────────────────────
 i_orbWin    = input.string("30min", "ORB Window",
                  options=["15min","30min","60min"],                             group="ORB")
+
+// ── Risk ──────────────────────────────────────────────────────────────────────
 i_rr        = input.float(2.0,   "Reward : Risk",    minval=0.5, step=0.25,   group="Risk")
 i_minRng    = input.float(10.0,  "Min Range (pts)",  minval=0,                 group="Risk")
 i_maxRng    = input.float(500.0, "Max Range (pts)",  minval=0,                 group="Risk")
+
+// ── Filters ───────────────────────────────────────────────────────────────────
 i_volFilter = input.bool(true,   "Volume Spike",                               group="Filters")
 i_volMult   = input.float(1.5,   "  Multiplier",     minval=1.0, step=0.1,    group="Filters")
 i_rsiFilter = input.bool(true,   "RSI Momentum",                               group="Filters")
 i_gapFilter = input.bool(true,   "Gap-Direction Bias",                         group="Filters")
 i_dir       = input.string("Both","Trade Direction",
                  options=["Both","Long Only","Short Only"],                     group="Filters")
-i_debug     = input.bool(false,  "Session Colors",                             group="Display")
+
+// ── Colors ────────────────────────────────────────────────────────────────────
+i_boxBg     = input.color(color.new(color.blue,  82), "ORB Box Fill",         group="Colors")
+i_boxBdr    = input.color(color.new(color.blue,  40), "ORB Box Border",       group="Colors")
+i_colHigh   = input.color(color.red,                  "ORB High Line",        group="Colors")
+i_colLow    = input.color(color.lime,                 "ORB Low Line",         group="Colors")
+i_colMid    = input.color(color.new(color.gray, 50),  "ORB Mid Line",         group="Colors")
+i_colLong   = input.color(color.lime,                 "Long Signal",          group="Colors")
+i_colShort  = input.color(color.red,                  "Short Signal",         group="Colors")
+i_colArmed  = input.color(color.new(color.yellow, 50),"Armed (watching)",     group="Colors")
+
+// ── Display ───────────────────────────────────────────────────────────────────
+i_showArmed = input.bool(true,  "Show Armed Dots",                             group="Display")
+i_showLabel = input.bool(true,  "Show Entry Labels (SL / TP)",                 group="Display")
+i_debug     = input.bool(false, "Show Session Colors",                         group="Display")
 
 // ── Session Windows (America/New_York) ────────────────────────────────────────
 TZ        = "America/New_York"
@@ -54,7 +72,7 @@ if inORB and not orbLocked
     orbHigh := math.max(nz(orbHigh, high), high)
     orbLow  := math.min(nz(orbLow,  low),  low)
 
-// Lock ORB on the first bar after the opening range window closes
+// First bar after the ORB window closes → lock levels
 if inORB[1] and not inORB and not orbLocked and not na(orbHigh)
     orbLocked := true
 
@@ -63,13 +81,28 @@ orbRange = orbHigh - orbLow
 orbMid   = (orbHigh + orbLow) / 2.0
 orbValid = orbLocked and orbRange >= i_minRng and orbRange <= i_maxRng
 
-// ── Gap Direction (prior day close vs today's open) ───────────────────────────
+// ── Gap Direction ─────────────────────────────────────────────────────────────
 prevDayClose = request.security(syminfo.tickerid, "D", close[1],
                  lookahead=barmerge.lookahead_off)
 gapUp   = not na(prevDayClose) and not na(orbOpen) and orbOpen > prevDayClose
 gapDown = not na(prevDayClose) and not na(orbOpen) and orbOpen < prevDayClose
 
 // ── Confirmation Filters ──────────────────────────────────────────────────────
+// Each filter is an independent gate — all must pass for a signal to fire.
+//
+//  1. VOLUME SPIKE  — breakout candle closes with volume > N× its 20-bar average.
+//     Filters out low-participation fakeouts; real breakouts move on conviction.
+//
+//  2. RSI MOMENTUM  — RSI(14) > 50 for longs, < 50 for shorts.
+//     Confirms momentum is already pointed in the breakout direction before entry.
+//
+//  3. GAP BIAS      — today's open vs prior day's close sets a preferred direction.
+//     Gap-up sessions favor longs (70 %+ continuation); gap-down favors shorts.
+//     Flat-open sessions allow both directions.
+//
+// All three filters can be toggled off individually in the Filters group.
+
+atr14    = ta.atr(14)
 volAvg   = ta.sma(volume, 20)
 volSpike = volume > volAvg * i_volMult
 rsi14    = ta.rsi(close, 14)
@@ -79,64 +112,122 @@ shortConf  = (not i_volFilter or volSpike) and (not i_rsiFilter or rsi14 < 50)
 longGapOk  = not i_gapFilter or gapUp   or (not gapUp and not gapDown)
 shortGapOk = not i_gapFilter or gapDown or (not gapUp and not gapDown)
 
-// ── Entry Signals (close confirmation — no wick fakes) ────────────────────────
-noPos      = strategy.position_size == 0
+// ── Armed State ───────────────────────────────────────────────────────────────
+// "Armed" = structural conditions are green, waiting for price to close the level.
+// RSI and gap are checked here (structural). Volume confirms only on the break candle.
+noPos       = strategy.position_size == 0
+rsiOkLong   = not i_rsiFilter or rsi14 > 50
+rsiOkShort  = not i_rsiFilter or rsi14 < 50
+
+armedLong  = orbValid and inTrade and not longTaken  and noPos and
+             rsiOkLong  and longGapOk  and i_dir != "Short Only" and close <= orbHigh
+armedShort = orbValid and inTrade and not shortTaken and noPos and
+             rsiOkShort and shortGapOk and i_dir != "Long Only"  and
+             close >= orbLow and not armedLong
+
+// ── Entry Signals (candle CLOSE above/below ORB — no wick fakes) ──────────────
 longBreak  = orbValid and inTrade and close > orbHigh and not longTaken  and noPos
 shortBreak = orbValid and inTrade and close < orbLow  and not shortTaken and noPos and not longBreak
 
 longEntry  = longBreak  and longConf  and longGapOk  and i_dir != "Short Only"
 shortEntry = shortBreak and shortConf and shortGapOk and i_dir != "Long Only"
 
-// ── Stop & Target (ORB boundary SL, fixed R:R TP) ─────────────────────────────
+// ── Stop & Target ─────────────────────────────────────────────────────────────
 longSL  = orbLow
 longTP  = close + (close - orbLow)   * i_rr
 shortSL = orbHigh
 shortTP = close - (orbHigh - close)  * i_rr
 
-// ── Execution ─────────────────────────────────────────────────────────────────
+// ── Execution + Push Notification ────────────────────────────────────────────
+// alert() fires a TradingView alert at bar close.
+// To receive push notifications:
+//   1. Open TradingView → Alerts (clock icon) → Create Alert
+//   2. Condition: "ORB Breakout | NQ / ES" → "Any alert() function call"
+//   3. Notifications: enable "Notify on App"  ← this sends push to TradingView mobile
+//   4. Optionally also enable Webhook for automation (e.g. Discord, broker API)
+
 if longEntry
     strategy.entry("Long", strategy.long)
     strategy.exit("LX", "Long", stop=longSL, limit=longTP)
     longTaken := true
+    alert("🟢 ORB LONG  " + syminfo.ticker +
+          "\nEntry  " + str.tostring(close,    "#.##") +
+          "   SL  "  + str.tostring(longSL,    "#.##") +
+          "   TP  "  + str.tostring(longTP,    "#.##") +
+          "\nRange  " + str.tostring(orbRange,  "#.0") + " pts" +
+          "   Gap  "  + (gapUp ? "UP ▲" : "FLAT") +
+          "   Vol  "  + (volSpike ? "SPIKE ✓" : "low"),
+          alert.freq_once_per_bar_close)
 
 if shortEntry
     strategy.entry("Short", strategy.short)
     strategy.exit("SX", "Short", stop=shortSL, limit=shortTP)
     shortTaken := true
+    alert("🔴 ORB SHORT  " + syminfo.ticker +
+          "\nEntry  " + str.tostring(close,    "#.##") +
+          "   SL  "  + str.tostring(shortSL,   "#.##") +
+          "   TP  "  + str.tostring(shortTP,   "#.##") +
+          "\nRange  " + str.tostring(orbRange,  "#.0") + " pts" +
+          "   Gap  "  + (gapDown ? "DN ▼" : "FLAT") +
+          "   Vol  "  + (volSpike ? "SPIKE ✓" : "low"),
+          alert.freq_once_per_bar_close)
 
 // ── Visualization ─────────────────────────────────────────────────────────────
-// Session background
 bgcolor(i_debug and inORB   ? color.new(color.blue,  90) : na)
 bgcolor(i_debug and inTrade ? color.new(color.green, 96) : na)
 
-// ORB building box — grows live during the opening range window
+// ORB building box — grows in real time during the opening range window
 var box orbBox = na
 if newDay
     box.delete(orbBox)
     orbBox := box.new(bar_index, high, bar_index + 1, low,
-         bgcolor=color.new(color.blue, 82),
-         border_color=color.new(color.blue, 40),
-         border_width=1)
+         bgcolor=i_boxBg, border_color=i_boxBdr, border_width=1)
 
 if inORB and not na(orbBox)
     box.set_top(orbBox,    orbHigh)
     box.set_bottom(orbBox, orbLow)
     box.set_right(orbBox,  bar_index + 1)
 
-// Locked ORB levels — flat lines drawn only during regular session hours
+// Locked ORB levels — drawn as continuous series only during regular session
 plot(orbLocked and inFullSess ? orbHigh : na, "ORB High",
-     color=color.red,                 linewidth=2, style=plot.style_linebr)
+     color=i_colHigh, linewidth=2, style=plot.style_linebr)
 plot(orbLocked and inFullSess ? orbLow  : na, "ORB Low",
-     color=color.lime,                linewidth=2, style=plot.style_linebr)
+     color=i_colLow,  linewidth=2, style=plot.style_linebr)
 plot(orbLocked and inFullSess ? orbMid  : na, "ORB Mid",
-     color=color.new(color.gray, 50), linewidth=1, style=plot.style_linebr)
+     color=i_colMid,  linewidth=1, style=plot.style_linebr)
+
+// Armed dots — appear on bars where all structural filters pass and we're watching
+// for a close above (long) or below (short) the ORB boundary
+plotchar(i_showArmed and armedLong,  "Armed Long",  "◆", location.belowbar, i_colArmed, size=size.tiny)
+plotchar(i_showArmed and armedShort, "Armed Short", "◆", location.abovebar, i_colArmed, size=size.tiny)
 
 // Entry markers
-plotshape(longEntry,  "Long",  shape.triangleup,   location.belowbar, color.lime, size=size.normal)
-plotshape(shortEntry, "Short", shape.triangledown,  location.abovebar, color.red,  size=size.normal)
+plotshape(longEntry,  "Long",  shape.triangleup,   location.belowbar, i_colLong,  size=size.normal)
+plotshape(shortEntry, "Short", shape.triangledown,  location.abovebar, i_colShort, size=size.normal)
+
+// Entry labels showing exact SL and TP at each signal bar
+if i_showLabel and longEntry
+    label.new(bar_index, low - atr14,
+         "LONG ▲" +
+         "\nEntry  " + str.tostring(close,  "#.##") +
+         "\nSL     " + str.tostring(longSL, "#.##") +
+         "\nTP     " + str.tostring(longTP, "#.##"),
+         xloc=xloc.bar_index, yloc=yloc.price,
+         style=label.style_label_up,
+         color=color.new(i_colLong, 70), textcolor=color.white, size=size.small)
+
+if i_showLabel and shortEntry
+    label.new(bar_index, high + atr14,
+         "SHORT ▼" +
+         "\nEntry  " + str.tostring(close,   "#.##") +
+         "\nSL     " + str.tostring(shortSL, "#.##") +
+         "\nTP     " + str.tostring(shortTP, "#.##"),
+         xloc=xloc.bar_index, yloc=yloc.price,
+         style=label.style_label_down,
+         color=color.new(i_colShort, 70), textcolor=color.white, size=size.small)
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-var table dash = table.new(position.top_right, 2, 7,
+var table dash = table.new(position.top_right, 2, 9,
      bgcolor=color.new(color.black, 70),
      border_color=color.new(color.gray, 50), border_width=1)
 
@@ -146,23 +237,30 @@ if barstate.islast
          text_color=orbLocked ? color.lime : color.orange, text_size=size.small)
     table.cell(dash, 0, 1, "High",    text_color=color.gray, text_size=size.small)
     table.cell(dash, 1, 1, not na(orbHigh) ? str.tostring(orbHigh, "#.##") : "—",
-         text_color=color.red, text_size=size.small)
+         text_color=i_colHigh, text_size=size.small)
     table.cell(dash, 0, 2, "Low",     text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 2, not na(orbLow)  ? str.tostring(orbLow, "#.##") : "—",
-         text_color=color.lime, text_size=size.small)
+    table.cell(dash, 1, 2, not na(orbLow)  ? str.tostring(orbLow, "#.##")  : "—",
+         text_color=i_colLow, text_size=size.small)
     table.cell(dash, 0, 3, "Range",   text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 3, orbLocked  ? str.tostring(orbRange, "#.##") + " pts" : "—",
+    table.cell(dash, 1, 3, orbLocked  ? str.tostring(orbRange, "#.0") + " pts" : "—",
          text_color=color.white, text_size=size.small)
     table.cell(dash, 0, 4, "Gap",     text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 4, gapUp ? "UP ▲" : gapDown ? "DN ▼" : "FLAT —",
-         text_color=gapUp ? color.lime : gapDown ? color.red : color.gray, text_size=size.small)
-    table.cell(dash, 0, 5, "Vol",     text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 5, volSpike ? "SPIKE ✓" : "low",
-         text_color=volSpike ? color.lime : color.gray, text_size=size.small)
-    table.cell(dash, 0, 6, "Session", text_color=color.gray, text_size=size.small)
-    table.cell(dash, 1, 6, inTrade ? "ACTIVE" : "—",
+    table.cell(dash, 1, 4, not i_gapFilter ? "off" : gapUp ? "UP ▲" : gapDown ? "DN ▼" : "FLAT",
+         text_color=not i_gapFilter ? color.gray : gapUp ? color.lime : gapDown ? color.red : color.gray,
+         text_size=size.small)
+    table.cell(dash, 0, 5, "Volume",  text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 5, not i_volFilter ? "off" : volSpike ? "SPIKE ✓" : "low ✗",
+         text_color=not i_volFilter ? color.gray : volSpike ? color.lime : color.red, text_size=size.small)
+    table.cell(dash, 0, 6, "RSI",     text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 6, not i_rsiFilter ? "off" : str.tostring(rsi14, "#.0") + (rsi14 > 50 ? " ▲" : " ▼"),
+         text_color=not i_rsiFilter ? color.gray : rsi14 > 50 ? color.lime : color.red, text_size=size.small)
+    table.cell(dash, 0, 7, "Armed",   text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 7, armedLong ? "LONG ◆" : armedShort ? "SHORT ◆" : "—",
+         text_color=armedLong ? color.lime : armedShort ? color.red : color.gray, text_size=size.small)
+    table.cell(dash, 0, 8, "Session", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 8, inTrade ? "ACTIVE" : "—",
          text_color=inTrade ? color.lime : color.gray, text_size=size.small)
 
-// ── Alerts ────────────────────────────────────────────────────────────────────
+// ── Alert Conditions (alternative to alert() — user creates manually in TradingView) ──
 alertcondition(longEntry,  "ORB Long",  "ORB Long: {{ticker}} closed above ORB high @ {{close}}")
 alertcondition(shortEntry, "ORB Short", "ORB Short: {{ticker}} closed below ORB low @ {{close}}")
