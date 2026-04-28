@@ -3,7 +3,7 @@ strategy("Fib Strategy v2", overlay=true,
          default_qty_type=strategy.percent_of_equity, default_qty_value=2,
          commission_type=strategy.commission.percent, commission_value=0.02,
          slippage=1, max_bars_back=500,
-         process_orders_on_close=true)
+         calc_on_every_tick=true)
 
 // ─── Inputs ───────────────────────────────────────────────────────────────────
 pivLeft   = input.int(5,    "Pivot Left Bars",            minval=1,   group="Pivots")
